@@ -2,16 +2,17 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230103
+// @version      230106
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // @updateURL    https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/yt-metabot.meta.js
 // @downloadURL  https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/yt-metabot.user.js
 // @icon         https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png
 // @include      https://*youtube.com/*
-// @include      https://*dislikemeter.com/?v*
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/2.2.4/jquery.min.js
 // @require      https://raw.githubusercontent.com/sizzlemctwizzle/GM_config/master/gm_config.js
+// @connect      youtube.com
+// @connect      returnyoutubedislikeapi.com
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
@@ -121,7 +122,8 @@ const imgdma = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAMAAADzN3
 const imgdmd = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACMAAAAZCAMAAACM5megAAAAllBMVEUAAAB/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f3+AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAx6H3iAAAAMXRSTlMABAgMFBgcICQoLDA8QERITFBUWGBkaGx4fICDj5OXo6evs7e7v8PH09ff4+fr8/f7vr5GKgAAAN1JREFUGBl9wY1agjAABdAbIoSCWiIJLn8yLKNN7vu/XBvQJ87JOegZLfJDaew3U7ilklcfAW5EiTb7JGtRGFtq8hV9BTsntH5orNH3VrNx9mB4kkYdo29xoUPlAwgCtIKaLgJAqkI0BJ0qABEFGme6xQBUCXhhOOUDuycI7jCRHCAlmSDnsEsGrDjgmL6MAYxOfGyGTiwquikPV0s6bdF3oIMao+9Z8d4Gt5KadxJYMt7xYclok7AJar+KRvVFrYTtSC1Ca07tHbZvkhU6KbUlbPOiyCfo+OuiWOHfHxHEYF/PvYVrAAAAAElFTkSuQmCC';
 const imgyto = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAMAAAC7IEhfAAACJVBMVEX///+qAADMMzP/MzPjKiXbJiPVIyPZJSPFGx/QIiLBGB7cKSXRIiLeKSnkKyfOICHcIiLRISLJHB7jKybCGB/QISHVKSDgKifMGRnhKyXMHR/CGR3ZJSPiLCbdKSXiKybFFyLCGR7WJCLdJyTDGB3JHSDhKiXIHB/ZJiPMHiHQIiLXIyPTIyLKHR/FGCDFGh/lMxnjKyXDGR3GGx/cJyTEGR7BGh7NICDUIiLOHiPcLiLiKyXgKSXhKyXPHyHXJSPNICDgKibgKSbJHB/XJCPnLiLfKSXfKSTfKSbDGR7EGR7KHB/CGR3CGB3CGB7BGB7BGB3BGR3////NHyHLHiDo4ODWJCPMHiD//v7p4eHaJyTZJiTYJiTOICHXJSPYJSPPICHeKSXQISHVJCPunZzFGh/UIyPqmpvnzMv89PTlxMTYUVL78vL08fHomZrzzM399/f+/Pzm09PXTk7QNDbfKiXGGx/pmprnj47XSUvktrbompryxMXVOTncKCXKHSDHHB/t5+f7+vrdKCXbJyTsnJvcOTfhgYDIHB/18fHqm5v05eXaMzHZVFTYTEvHGx/++vrZLy3spKThiYnTLi78+vrs19fqnJzYKynVNDXjrq7VPT7rm5vJHSDebm3XKCbRISLZWFrTIyLSIiLtrKzEGh7cZmXWJiXgKibvtLTWQ0Tlvr7bXVzfd3bwvL3sm5vjW1nTIiLDGh7hKybtnJviKybCGR58TkH5AAAAUnRSTlMAAwUFie17+rn8r7n8HzqvFu9b73vWH1sK54nnida5/BaYr1uJ7fqal+cWOu/6H5oKr/q5mls6H9Y6Fnzte3vnfJeYmOcW7Zqa7e2Y1u/8/O/WqnF1KAAAAb9JREFUeF6FzGOb61AYheGV1B3btu05tLHbsY1j27Zt2/h9k7SnyZt0p7m/ruda0BAi59VkxGVlxWXUtEUKMBJhTflLpFgjwNO6qPC3TuHiZQiStPwDR3sStCwr9hpYaQFRnTliKLOa/IWNhBCmftafDqk+0OUdM5EHn2jbGRO2aMiKexU/zvVyFUOS6OhTjG85cKWPw5EIIL1fNc7Y5fM3+4OlA8KCIdUfxtjde18fDOktFVA2SEih5OL0s+eDOmWwdxJnmc+pk7Pv3ndq2JE7Rsih/7Tn85cxKhfNk8R3qQmcdhy6SpZmlL8injDV1p6OR9eUpRyun4Qc0tNduwOLC+GviUuMmrl9R1nCEfOCoOGO+w/JEoOEUWJKyW7cOjpKJSBqmNjP/Ha+eTysFYX5A4Q/7P74aUBvIVo8hBx2fzvoCdYCoYSEhxk7stnDUSIAqV2qbdtfdnGlAmiq8Cr2ePkqmiBZctzUGshKC56aKCiFT+wFE7H4r+hESEUIEOuuh1AnQpHs3GfImQxCrJowUCVCq2HVW47VDQiSnVP7S6c2Jxs8lflp/4i0/EoYERrj3WvXrd+wcZM7vlEANQfRAClqAtKfNQAAAABJRU5ErkJggg==';
 const regexalt = /\{(.*?)\}/;
-const regexdate = /joinedDateText(.*?)ext":"(.*?)ext":"(.*?)"}/;
+const regexdate = /joinedDateText"?:\s*\{"content":"(.*?)"/;
+const regexdateOld = /joinedDateText(.*?)ext":"(.*?)ext":"(.*?)"}/;
 const regexlang = /"hostLanguage":"(.*?)"/;
 const regexannyto = /(.*)(\r\n|\n\r|\n)([\W\w]+)/;
 const ERKYurl = 'https://raw.githubusercontent.com/FeignedAccomplice/YOUTUBOTS/master/KB.CSV';
@@ -156,16 +158,7 @@ const iconc5 = '<span style="' + iconstyledef + '">' + iconsdef[5] + '</span> ';
 var txtlistpadd = '\u2003<span id="listpadd" style="cursor: pointer; ' + iconstyledef + '" title="Добавить в закладки">' + iconsdef[0] + '</span>';
 
 console.log("[MetaBot for Youtube] Starting at URL: " + window.location);
-if (window.location.hostname == "dislikemeter.com" || window.location.hostname == "www.dislikemeter.com") {
-  var videoid = getURLParameter('v', location.search);
-  if (videoid) {
-    waitForKeyElements('input#form_vid', function dmIDins(jNode) {
-      var pNode = $(jNode)[0];
-      pNode.value = videoid;
-    });
-    return;
-  }
-} else if (window.location.pathname == '/live_chat_replay' || window.location.pathname == '/live_chat') {
+if (window.location.pathname == '/live_chat_replay' || window.location.pathname == '/live_chat') {
   console.log("[MetaBot for Youtube] Live Chat page detected. Skipping.");
 } else {
   waitforinit();
@@ -283,9 +276,13 @@ function waitforlists() {
     switch (ytmode) {
       case 1:
         spinnercheckNew();
-        waitForKeyElements('div#main.style-scope.ytd-comment-renderer', parseitemNew);
+        // T4: MutationObserver covers infinite-scroll comment additions on modern YT
+        setupCommentObserver();
+        // T6: ytd-comment-view-model is primary in modern YT; legacy ytd-comment-renderer kept as fallback
+        waitForKeyElements('ytd-comment-view-model, div#main.style-scope.ytd-comment-renderer', parseitemNew);
 //        waitForKeyElements('ytd-menu-renderer.style-scope.ytd-video-primary-info-renderer', preparedmNew);
-        waitForKeyElements('div#channel-header.ytd-c4-tabbed-header-renderer', insertchanNew);
+        // T2: primary = modern YT polymer3 header; fallback = legacy c4-tabbed-header
+        waitForKeyElements('yt-page-header-renderer, div#channel-header.ytd-c4-tabbed-header-renderer', insertchanNew);
         break;
       case 2:
         console.log("[MetaBot for Youtube] YouTube Classic design not supported.");
@@ -310,7 +307,8 @@ function spinnercheckNew() {
         if ($(jNode).find("#spinnerContainer").hasClass("cooldown")) {
           setTimeout(recheckallNew, 2000);
         } else {
-          $('div#main.style-scope.ytd-comment-renderer').each(function() {
+          // T6: ytd-comment-view-model primary; legacy ytd-comment-renderer fallback
+          $('ytd-comment-view-model, div#main.style-scope.ytd-comment-renderer').each(function() {
             var cNode = $(this).find(".published-time-text")[0];
             deleteitemNew(this, $(cNode).find("a")[0].href);
           });
@@ -372,12 +370,13 @@ function spinnercheckNew() {
 }
 
 function recheckallNew(){
-  $('div#main.style-scope.ytd-comment-renderer').each(function() {
+  // T6: ytd-comment-view-model primary; legacy ytd-comment-renderer fallback
+  $('ytd-comment-view-model, div#main.style-scope.ytd-comment-renderer').each(function() {
     recheckNew(this);
   });
 }
 
-function insertchanNew(jNode) {
+async function insertchanNew(jNode) {
   this.addEventListener('yt-navigate-finish', function insertchanNewR() {
     this.removeEventListener('yt-navigate-finish', insertchanNewR);
     setTimeout(insertchanNew, 300, jNode);
@@ -387,13 +386,13 @@ function insertchanNew(jNode) {
     chanURL = chanURL.slice(0, -1);
   }
   var reuse = false;
-  var userID = chanURL.split('/').pop();
-  if ($(jNode).find('span#subscriber-count.ytd-channel-name')[0]) {
-    var noticespan = $(jNode).find('span#subscriber-count.ytd-channel-name')[0];
+  var userID = await normalizeChannelId(chanURL) || chanURL.split('/').pop();
+  if ($(jNode).find('span#metabot-chan-badge')[0]) {
+    var noticespan = $(jNode).find('span#metabot-chan-badge')[0];
     reuse = true;
   } else {
     var noticespan = document.createElement('span');
-    noticespan.id = 'subscriber-count';
+    noticespan.id = 'metabot-chan-badge';
     noticespan.classList.add("ytd-channel-name");
   }
   var foundID = arrayERKY.indexOf(userID);
@@ -407,7 +406,16 @@ function insertchanNew(jNode) {
     noticespan.style = 'background: rgba(100,100,100,0.2); ' + stylecommon;
   }
   if (!reuse) {
-    $(jNode).find('ytd-channel-name#channel-name.ytd-c4-tabbed-header-renderer').append(noticespan);
+    // T2: try modern polymer3 title containers first, fallback to legacy
+    var titleTarget = $(jNode).find('h1.dynamicTextViewModelH1')[0]
+      || $(jNode).find('yt-content-metadata-view-model')[0]
+      || $(jNode).find('ytd-channel-name#channel-name')[0]
+      || $(jNode).find('ytd-channel-name#channel-name.ytd-c4-tabbed-header-renderer')[0]; // DEAD - legacy
+    if (titleTarget) {
+      $(titleTarget).append(noticespan);
+    } else {
+      console.warn('[MetaBot] insertchanNew: channel title target not found, badge not inserted');
+    }
   }
 }
 
@@ -439,36 +447,31 @@ function preparedmNew(jNode) {
       $(btnText).find('yt-formatted-string#text').html('');
     }
   }
-  console.log("[MetaBot for Youtube] Dislikemeter: requesting data for video id " + videoid);
-  getlist(insertdmNew, pNode, 'https://dislikemeter.com/iframe/?vid=' + videoid);
+  console.log("[MetaBot for Youtube] Return YouTube Dislike: requesting data for video id " + videoid);
+  getlist(insertdmNew, pNode, 'https://returnyoutubedislikeapi.com/votes?videoId=' + videoid);
 }
 
 function insertdmNew(jNode, response, code, url) {
-  if (response.indexOf('"submit"') >= 0){
-    console.log("[MetaBot for Youtube] Dislikemeter: video already added.");
-    var dmurl = url.replace('iframe/?vid=', 'video/');
-    var dmtxt = 'Открыть статистику видео на анализаторе Дизлайкметр';
-    var dmclr = 'var(--yt-spec-call-to-action)';
-  } else {
-    console.log("[MetaBot for Youtube] Dislikemeter: video not added yet.");
-    var dmurl = url.replace('iframe/?vid=', '?v=');
-    var dmtxt = 'Добавить видео на анализатор Дизлайкметр';
-    var dmclr = 'var(--yt-spec-icon-inactive)';
+  try {
+    var data = JSON.parse(response);
+    var dislikes = data.dislikes || 0;
+    var rating = data.rating || 0;
+    // red if more than 30% dislikes, green otherwise
+    var color = (rating < 0.7) ? '#e05252' : '#52c06e';
+    var dmspan = document.createElement('span');
+    dmspan.id = 'dmspan';
+    dmspan.style.cssText = 'display:inline-flex;align-items:center;margin:0 8px;font-size:1.4rem;color:' + color + ';cursor:default';
+    dmspan.title = 'Дизлайки (returnyoutubedislike.com)';
+    dmspan.innerHTML = '👎 ' + dislikes.toLocaleString('ru-RU');
+    jNode.style.textAlign = "right";
+    // remove previous insertion to avoid duplicates
+    var prev = $(jNode).find('span#dmspan')[0];
+    if (prev) prev.remove();
+    $(jNode).prepend(dmspan);
+    console.log("[MetaBot for Youtube] Return YouTube Dislike: dislikes=" + dislikes + " rating=" + rating);
+  } catch (e) {
+    console.warn('[MetaBot] insertdmNew: failed to parse response:', e.message);
   }
-  jNode.style.textAlign = "right";
-  var dmbutton = document.createElement('ytd-button-renderer');
-  dmbutton.id = 'dmbutton';
-  dmbutton.setAttribute('button-renderer', '');
-  dmbutton.setAttribute('is-icon-button', '');
-  dmbutton.classList.add("style-scope");
-  dmbutton.classList.add("ytd-menu-renderer");
-  dmbutton.classList.add("force-icon-button");
-  dmbutton.classList.add("style-default");
-  dmbutton.classList.add("size-default");
-  dmbutton.style.marginTop = "3px";
-  dmbutton.style.marginRight = "4px";
-  $(jNode).prepend(dmbutton);
-  $(jNode).find('ytd-button-renderer#dmbutton').html('<a class="yt-simple-endpoint style-scope ytd-button-renderer"><yt-icon-button id="button" class="style-scope ytd-button-renderer style-default size-default" style="padding:8px;width:36px;height:36px;color:rgb(255,200,0)" onclick="window.open(\'' + dmurl + '\', \'_blank\');"><svg viewBox="0 0 20 20" preserveAspectRatio="xMidYMid meet" focusable="false" class="style-scope yt-icon" style="pointer-events: none; display: block; width: 100%; height: 100%; fill:' + dmclr + '"><g class="style-scope yt-icon"><path d="m0 2c0 5.5 8 5.5 8 0 0-1-2-1-2 0 0 3-4 3-4 0 0-1-2-1-2 0m12 0c0 5.5 8 5.5 8 0 0-1-2-1-2 0 0 3-4 3-4 0 0-1-2-1-2 0m-12 16q2-6.5 10-6.5v2q-6 0-8 4.5c0 0.5-2 0.7-2 0m6 2v-3l4-1v4m1 0v-8h4v8m1 0v-11l4-1v12" class="style-scope yt-icon"></path></g></svg></yt-icon-button><tp-yt-paper-tooltip>' + dmtxt + '</tp-yt-paper-tooltip></a>');
 }
 
 function insertannNew(jNode) {
@@ -636,19 +639,23 @@ function resetconfigNew(jNode) {
   $(jNode).find("input#colorcustom5").val(parseColor(51328, false));
 }
 
-function parseitemNew(jNode) {
+async function parseitemNew(jNode) {
+  // Idempotency guard — skip already-processed nodes (T4: MutationObserver may call multiple times)
+  if (jNode.dataset && jNode.dataset.metabotDone === '1') return;
+  if (jNode.dataset) jNode.dataset.metabotDone = '1';
   if (GM_config.get('option4') === true) {
     var spanlistpadd = txtlistpadd;
   } else {
     var spanlistpadd = '';
   }
-  var pNode = $(jNode).find("#header-author.ytd-comment-renderer")[0];
+  // T6: ytd-comment-view-model replaced ytd-comment-renderer; #header-author may still exist inside it
+  var pNode = $(jNode).find("#header-author")[0];
   $(jNode).hover(function blockShow() {
     $(pNode).find("#t30sp").show();
   }, function blockHide() {
     $(pNode).find("#t30sp").hide();
   });
-  var userID = $(jNode).find("a")[0].href.split('/').pop();
+  var userID = await normalizeChannelId($(jNode).find("a")[0].href) || $(jNode).find("a")[0].href.split('/').pop();
   var foundID = arrayERKY.indexOf(userID);
   var foundIDp1 = -1;
   var foundIDc1 = -1;
@@ -759,7 +766,7 @@ function parseitemNew(jNode) {
     window.open($(jNode).find("a")[0].href + '/about');
   }, false);
   $(jNode).find("#top30")[0].addEventListener("click", function opent30New() {
-    window.open('https://www.t30p.ru/search.aspx?s=' + $(jNode).find("a")[0].href.split('/').pop());
+    window.open('https://www.t30p.ru/search.aspx?s=' + userID);
   }, false);
   this.addEventListener('yt-navigate-start', function wipeitemNewS() {
     this.removeEventListener('yt-navigate-start', wipeitemNewS);
@@ -781,7 +788,8 @@ function recheckNew(jNode) {
       var cNode = $(jNode).parent().parent().find("#content-text");
       $(cNode).parent().removeAttr('style');
       $(cNode).removeAttr('style');
-      $(jNode).find("ytd-toggle-button-renderer.ytd-comment-action-buttons-renderer:eq(1)").removeAttr('style');
+      // DEAD - ytd-comment-action-buttons-renderer removed from YT DOM; modern dislike has no extra style to clear
+      // $(jNode).find("ytd-toggle-button-renderer.ytd-comment-action-buttons-renderer:eq(1)").removeAttr('style');
       parseitemNew(jNode);
     }
   }
@@ -806,7 +814,17 @@ function sendinfo() {
 
 function listpaddNew(jNode, response, url) {
   var matches = regexdate.exec(response);
-  var day = Dparse(matches[3]);
+  if (!matches) {
+    matches = regexdateOld.exec(response);
+    if (!matches) {
+      console.warn('[MetaBot] listpadd: joinedDate parse failed for', url);
+      $(jNode).find("#listpadd").html(iconsdef[0]);
+      return;
+    }
+    var day = Dparse(matches[3]);
+  } else {
+    var day = Dparse(matches[1]);
+  }
   $('textarea#listpersonal')[0].value += url.substring(0, url.length - 6).split('/').pop() + '=' + day + '\n';
   var tempArray = $('textarea#listpersonal')[0].value.split('\n');
   var uniqArray = tempArray.reduce(function(a,b){
@@ -840,13 +858,13 @@ function listpdelNew(jNode) {
   console.log("[MetaBot for Youtube] Bookmarks (personal list) updated.");
 }
 
-function checkdateNew(jNode) {
+async function checkdateNew(jNode) {
   if (['en', 'en-US', 'en-GB', 'ru', 'uk', 'be', 'bg'].indexOf(currentlangNew()) < 0) {
     alert('Функция поддерживается только на языках:\n \u2714 English\n \u2714 Русский\n \u2714 Українська\n \u2714 Беларуская \u2714 Български\nВы можете сменить язык интерфейса в меню настроек YouTube.');
     return;
   }
   $(jNode).find("#checkbtn")[0].remove();
-  var userID = $(jNode).find("a")[0].href.split('/').pop();
+  var userID = await normalizeChannelId($(jNode).find("a")[0].href) || $(jNode).find("a")[0].href.split('/').pop();
   var foundID = arrayERKY.indexOf(userID);
   if (foundID > -1) {
     console.log("[MetaBot for Youtube] user found in ERKY-db: " + userID);
@@ -857,27 +875,44 @@ function checkdateNew(jNode) {
 }
 
 function procdateNew(jNode, response, url) {
-  var matches = regexdate.exec(response);
-  var testday = Dparse(matches[3]);
-  var aNode = $(jNode).find("#author-text")[0];
-  var cNode = $(jNode).parent().find("#content-text")[0];
-  var newspan = document.createElement('span');
-  newspan.id = 'botmark';
-  var checkBadge = $(aNode).parent().find('span#author-comment-badge')[0];
-  newspan.innerHTML = '<img src="' + minf + '" title="Дата регистрации:" /> ' + testday;
-  $(aNode).append(newspan);
-  if ($(checkBadge).length > 0) {
-    $(checkBadge).attr('hidden', '');
-    $(aNode).removeAttr('hidden');
+  try {
+    // try new YouTube format first (2022+): joinedDateText":{"content":"..."}
+    var matches = regexdate.exec(response);
+    if (!matches) {
+      // fallback to old format: joinedDateText...ext":"..."ext":"..."
+      matches = regexdateOld.exec(response);
+      if (!matches) {
+        console.warn('[MetaBot] joinedDate parse failed: no match in response for', url);
+        return;
+      }
+      // old format: date is in group 3
+      var testday = Dparse(matches[3]);
+    } else {
+      // new format: date is in group 1
+      var testday = Dparse(matches[1]);
+    }
+    var aNode = $(jNode).find("#author-text")[0];
+    var cNode = $(jNode).parent().find("#content-text")[0];
+    var newspan = document.createElement('span');
+    newspan.id = 'botmark';
+    var checkBadge = $(aNode).parent().find('span#author-comment-badge')[0];
+    newspan.innerHTML = '<img src="' + minf + '" title="Дата регистрации:" /> ' + testday;
+    $(aNode).append(newspan);
+    if ($(checkBadge).length > 0) {
+      $(checkBadge).attr('hidden', '');
+      $(aNode).removeAttr('hidden');
+    }
+    $(cNode).parent().css({
+      "background": "rgba(170,170,170,0.3)",
+      "border-left": "3px solid rgba(170,170,170,0.3)",
+      "padding-left": "3px"
+    });
+    aNode = $(jNode).find("#checksp");
+    aNode.attr('data-chan', $(jNode).find("a#author-text")[0].href);
+    aNode.hide();
+  } catch (err) {
+    console.warn('[MetaBot] joinedDate parse failed for', url, ':', err.message);
   }
-  $(cNode).parent().css({
-    "background": "rgba(170,170,170,0.3)",
-    "border-left": "3px solid rgba(170,170,170,0.3)",
-    "padding-left": "3px"
-  });
-  aNode = $(jNode).find("#checksp");
-  aNode.attr('data-chan', $(jNode).find("a#author-text")[0].href);
-  aNode.hide();
 }
 
 function markbotNew(jNode, txt) {
@@ -996,7 +1031,15 @@ function gmColor(gmVar, colpos) {
 
 function requestDislike(jNode) {
   var element;
-  element = $(jNode).parent().find("ytd-toggle-button-renderer.ytd-comment-action-buttons-renderer:not(.style-default-active)")[1];
+  // T6: modern YT uses ytd-comment-view-model + #action-buttons; search scoped to comment node
+  // Selectors cover EN ("Dislike") and RU ("не нравится") locales; aria-pressed=false = not yet clicked
+  var commentNode = $(jNode).parent()[0] || jNode;
+  var btn = commentNode.querySelector('#action-buttons button[aria-label*="islike" i], #action-buttons button[aria-label*="не нравится" i]');
+  if (btn && btn.getAttribute('aria-pressed') === 'false') {
+    element = btn;
+  }
+  // DEAD - ytd-toggle-button-renderer.ytd-comment-action-buttons-renderer no longer in YT DOM
+  // element = $(jNode).parent().find("ytd-toggle-button-renderer.ytd-comment-action-buttons-renderer:not(.style-default-active)")[1];
   if (element) orderedClicksArray.push(element);
   if (bDTaskSet == 0) {
     bDTaskSet = 1;
@@ -1005,12 +1048,18 @@ function requestDislike(jNode) {
 }
 
 function scheduledDislike() {
-  if ( bDBlur || document.querySelector('paper-dialog.ytd-popup-container:not([style*="display:none"]):not([style*="display: none"])') || document.querySelector('label.option-selectable-item-renderer-radio-container') ) {
+  // T6: modern dialog check — tp-yt-paper-dialog[opened] or native dialog[open]; keep legacy paper-dialog as fallback
+  var dialogOpen = document.querySelector('tp-yt-paper-dialog[opened], dialog[open]')
+    || document.querySelector('paper-dialog.ytd-popup-container:not([style*="display:none"]):not([style*="display: none"])'); // DEAD - legacy
+  if ( bDBlur || dialogOpen || document.querySelector('label.option-selectable-item-renderer-radio-container') ) {
     setTimeout(scheduledDislike, minDCTime + Math.random() * (maxDCTime - minDCTime));
   } else {
     if (orderedClicksArray.length) {
       var element = orderedClicksArray.shift();
-      if ( !(element.classList.contains("style-default-active")) || (element.getAttribute("aria-checked") == "false") ) {
+      // T6: primary state check via aria-pressed; fallback to legacy class check
+      var alreadyPressed = element.getAttribute('aria-pressed') === 'true'
+        || element.classList.contains('style-default-active'); // DEAD - legacy class
+      if (!alreadyPressed) {
         $(element).css({"background": "rgba(255,50,50,0.3)"});
         $(element).css({"border-radius": "50%"});
         element.click();
@@ -1091,6 +1140,54 @@ $(window).blur(function() {
   bDBlur = 1;
 });
 
+// Cache for @handle -> UCxxx resolutions (lazy-init on window to avoid TDZ when
+// normalizeChannelId is called from hoisted async functions earlier in the file)
+async function normalizeChannelId(href) {
+  if (!window._mbHandleCache) window._mbHandleCache = new Map();
+  var handleCache = window._mbHandleCache;
+  if (!href) return null;
+  var tail = href.split('/').pop().split('?')[0];
+  // Already a UCxxx ID
+  if (tail.startsWith('UC') && tail.length === 24) return tail;
+  // Handle URL: /@ChannelName
+  if (tail.startsWith('@')) {
+    if (handleCache.has(tail)) return handleCache.get(tail);
+    try {
+      var responseText = await new Promise(function(resolve, reject) {
+        if (typeof GM_xmlhttpRequest !== 'undefined') {
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: 'https://www.youtube.com/' + tail,
+            onload: function(r) { resolve(r.responseText); },
+            onerror: reject,
+            timeout: 5000
+          });
+        } else {
+          fetch('https://www.youtube.com/' + tail).then(function(r) { return r.text(); }).then(resolve).catch(reject);
+        }
+      });
+      var match = responseText.match(/<meta\s+itemprop="channelId"\s+content="(UC[^"]+)"/i);
+      if (match) {
+        handleCache.set(tail, match[1]);
+        return match[1];
+      }
+      // fallback: inline JSON
+      var fallback = responseText.match(/"channelId":"(UC[^"]+)"/);
+      if (fallback) {
+        handleCache.set(tail, fallback[1]);
+        return fallback[1];
+      }
+    } catch (e) {
+      console.warn('[MetaBot] handle resolve failed for', tail, ':', e.message);
+    }
+    // cache negative to avoid repeated retries
+    handleCache.set(tail, null);
+    return null;
+  }
+  // Unknown format, return as-is
+  return tail;
+}
+
 function getpage(callback, jNode, url) {
   var request = new XMLHttpRequest();
   request.onreadystatechange = function() {
@@ -1161,3 +1258,52 @@ function waitForKeyElements(selectorTxt,actionFunction,bWaitOnce) {
   }
   waitForKeyElements.controlObj = controlObj;
 }
+
+// T4: MutationObserver for infinite-scroll comment loading on modern YT
+// (paper-spinner-lite / paper-spinner#spinner removed in post-2022 Polymer → Lit migration)
+function setupCommentObserver() {
+  var comments = document.querySelector('ytd-comments#comments, #comments');
+  if (!comments) {
+    if (window._metabotObserverRetries === undefined) window._metabotObserverRetries = 0;
+    if (window._metabotObserverRetries++ < 30) {
+      setTimeout(setupCommentObserver, 1000);
+    }
+    return;
+  }
+  if (window._metabotObserver) return;
+
+  var observer = new MutationObserver(function(mutations) {
+    for (var i = 0; i < mutations.length; i++) {
+      var added = mutations[i].addedNodes;
+      for (var j = 0; j < added.length; j++) {
+        var node = added[j];
+        if (node.nodeType !== 1) continue;
+        if (node.matches && node.matches('ytd-comment-thread-renderer, ytd-comment-view-model')) {
+          try { parseitemNew(node); } catch (e) { console.warn('[MetaBot] observer parseitem failed:', e.message); }
+        }
+        // Process nested renderers inside loaded batch containers
+        if (node.querySelectorAll) {
+          var inner = node.querySelectorAll('ytd-comment-thread-renderer, ytd-comment-view-model');
+          for (var k = 0; k < inner.length; k++) {
+            try { parseitemNew(inner[k]); } catch (e) { console.warn('[MetaBot] observer nested failed:', e.message); }
+          }
+        }
+      }
+    }
+  });
+  observer.observe(comments, { childList: true, subtree: true });
+  window._metabotObserver = observer;
+  console.log('[MetaBot] MutationObserver attached to #comments');
+}
+
+// T4: YouTube SPA — reset observer on navigation to new video
+document.addEventListener('yt-navigate-finish', function() {
+  if (window._metabotObserver) {
+    window._metabotObserver.disconnect();
+    window._metabotObserver = null;
+  }
+  window._metabotObserverRetries = 0;
+  if (typeof ytmode !== 'undefined' && ytmode === 1) {
+    setTimeout(setupCommentObserver, 2000);
+  }
+});
