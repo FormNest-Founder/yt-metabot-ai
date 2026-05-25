@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230107
+// @version      230111
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // @updateURL    https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/yt-metabot.meta.js
@@ -10,16 +10,35 @@
 // @icon         https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png
 // @match        *://*.youtube.com/*
 // @include      https://*youtube.com/*
-// @require      https://ajax.googleapis.com/ajax/libs/jquery/2.2.4/jquery.min.js
+// @require      http://localhost:8888/trustedtypes-shim.js
+// @require      https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js
 // @require      https://raw.githubusercontent.com/sizzlemctwizzle/GM_config/master/gm_config.js
 // @connect      youtube.com
 // @connect      returnyoutubedislikeapi.com
+// @connect      raw.githubusercontent.com
+// @connect      github.com
+// @connect      githubusercontent.com
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM.xmlHttpRequest
 // @run-at       document-end
 // ==/UserScript==
+
+// Trusted Types policy shim — YouTube (and other Google sites) require all
+// innerHTML assignments to go through a TrustedHTML policy. jQuery 2.x and
+// many parts of MetaBot use raw .innerHTML/.html() which the browser rejects
+// with "This document requires 'TrustedHTML' assignment".
+// Creating a default policy that passes input through restores legacy behavior.
+if (window.trustedTypes && window.trustedTypes.createPolicy && !window.trustedTypes.defaultPolicy) {
+  try {
+    window.trustedTypes.createPolicy('default', {
+      createHTML: (input) => input,
+      createScript: (input) => input,
+      createScriptURL: (input) => input
+    });
+  } catch (e) { /* policy already exists or CSP blocks — non-fatal */ }
+}
 
 GM_config.init( {
   'id': 'ytmetabot_config',
