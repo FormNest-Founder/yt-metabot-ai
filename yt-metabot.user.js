@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230112
+// @version      230113
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // @updateURL    https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/yt-metabot.meta.js
@@ -669,9 +669,15 @@ function resetconfigNew(jNode) {
 }
 
 async function parseitemNew(jNode) {
-  // Idempotency guard — skip already-processed nodes (T4: MutationObserver may call multiple times)
-  if (jNode.dataset && jNode.dataset.metabotDone === '1') return;
-  if (jNode.dataset) jNode.dataset.metabotDone = '1';
+  // Idempotency guard — skip already-processed comments.
+  // Mark on the parent thread renderer (or jNode itself as fallback) — this prevents
+  // double-processing when the selector matches BOTH ytd-comment-view-model AND
+  // div#main.ytd-comment-renderer inside the same thread (was causing the date
+  // to be inserted twice). T4 (MutationObserver) may also fire for both.
+  var rawNode = jNode instanceof Element ? jNode : (jNode[0] || jNode);
+  var guard = (rawNode.closest && rawNode.closest('ytd-comment-thread-renderer')) || rawNode;
+  if (guard.dataset && guard.dataset.metabotDone === '1') return;
+  if (guard.dataset) guard.dataset.metabotDone = '1';
   if (GM_config.get('option4') === true) {
     var spanlistpadd = txtlistpadd;
   } else {
