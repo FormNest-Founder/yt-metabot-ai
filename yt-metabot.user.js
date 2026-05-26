@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230203
+// @version      230303
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -218,7 +218,7 @@ var mbdb = {};
 
 mbdb.open = function() {
   return new Promise(function(resolve, reject) {
-    var req = indexedDB.open('metabot_db', 1);
+    var req = indexedDB.open('metabot_db', 3);
     req.onupgradeneeded = function(e) {
       var db = e.target.result;
       if (!db.objectStoreNames.contains('channels')) {
@@ -230,6 +230,15 @@ mbdb.open = function() {
       }
       if (!db.objectStoreNames.contains('clf_queue')) {
         db.createObjectStore('clf_queue', {keyPath: 'channelId'});
+      }
+      if (!db.objectStoreNames.contains('tracked_channels')) {
+        db.createObjectStore('tracked_channels', {keyPath: 'channelId'});
+      }
+      if (!db.objectStoreNames.contains('networks')) {
+        db.createObjectStore('networks', {keyPath: 'clusterId'});
+      }
+      if (!db.objectStoreNames.contains('analysis_queue')) {
+        db.createObjectStore('analysis_queue', {keyPath: 'channelId'});
       }
     };
     req.onsuccess = function(e) { resolve(e.target.result); };
@@ -373,12 +382,460 @@ mbdb.applyClassification = function(channelId, label, confidence, reasoning) {
   });
 };
 
+// ===== T12 — Channel tracking functions =====
+mbdb.trackChannel = function(channelId, displayName) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('tracked_channels', 'readwrite');
+      tx.objectStore('tracked_channels').put({channelId: channelId, displayName: displayName || channelId, addedAt: Date.now()});
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.untrackChannel = function(channelId) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('tracked_channels', 'readwrite');
+      tx.objectStore('tracked_channels').delete(channelId);
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.isTracked = function(channelId) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var req = db.transaction('tracked_channels', 'readonly').objectStore('tracked_channels').get(channelId);
+      req.onsuccess = function() { resolve(!!req.result); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.getTrackedChannels = function() {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var req = db.transaction('tracked_channels', 'readonly').objectStore('tracked_channels').getAll();
+      req.onsuccess = function() { resolve(req.result || []); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.countChannels = function() {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var req = db.transaction('channels', 'readonly').objectStore('channels').count();
+      req.onsuccess = function() { resolve(req.result); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.countComments = function() {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var req = db.transaction('comments', 'readonly').objectStore('comments').count();
+      req.onsuccess = function() { resolve(req.result); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.countQueue = function() {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var req = db.transaction('clf_queue', 'readonly').objectStore('clf_queue').count();
+      req.onsuccess = function() { resolve(req.result); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.countTracked = function() {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var req = db.transaction('tracked_channels', 'readonly').objectStore('tracked_channels').count();
+      req.onsuccess = function() { resolve(req.result); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.getAllChannels = function() {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var req = db.transaction('channels', 'readonly').objectStore('channels').getAll();
+      req.onsuccess = function() { resolve(req.result || []); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+// ===== T13 — Analysis queue & network functions =====
+mbdb.enqueueForAnalysis = function(channelId) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('analysis_queue', 'readwrite');
+      tx.objectStore('analysis_queue').put({channelId: channelId, addedAt: Date.now(), attempts: 0});
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.dequeueAnalysisBatch = function(n) {
+  n = n || 20;
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('analysis_queue', 'readwrite');
+      var store = tx.objectStore('analysis_queue');
+      var req = store.openCursor();
+      var batch = [];
+      req.onsuccess = function(e) {
+        var cursor = e.target.result;
+        if (cursor && batch.length < n) {
+          batch.push(cursor.value);
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        } else {
+          resolve(batch);
+        }
+      };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.applyPatterns = function(channelId, patternsObj) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('channels', 'readwrite');
+      var store = tx.objectStore('channels');
+      var getReq = store.get(channelId);
+      getReq.onsuccess = function() {
+        var data = getReq.result || {channelId: channelId};
+        if (patternsObj.themes) data.themes = patternsObj.themes;
+        if (patternsObj.targets) data.targets = patternsObj.targets;
+        if (patternsObj.network_signals) data.network_signals = patternsObj.network_signals;
+        if (patternsObj.analysisSummary) data.analysisSummary = patternsObj.analysisSummary;
+        data.aiAnalysisAt = patternsObj.aiAnalysisAt || Date.now();
+        data.lastSeen = Date.now();
+        store.put(data);
+      };
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.upsertNetwork = function(network) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('networks', 'readwrite');
+      tx.objectStore('networks').put(network);
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.getNetworks = function() {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var req = db.transaction('networks', 'readonly').objectStore('networks').getAll();
+      req.onsuccess = function() { resolve(req.result || []); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.countNetworks = function() {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var req = db.transaction('networks', 'readonly').objectStore('networks').count();
+      req.onsuccess = function() { resolve(req.result); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+// ===== T14 — UI helpers =====
+async function refreshStats() {
+  try {
+    var chCount = await mbdb.countChannels();
+    var qCount = await mbdb.countQueue();
+    var cmCount = await mbdb.countComments();
+    var nCount = await mbdb.countNetworks();
+    var el = document.querySelector('#mbStats');
+    if (el) el.textContent = '\u041A\u0430\u043D\u0430\u043B\u043E\u0432: ' + chCount + ' \u00B7 \u041E\u0447\u0435\u0440\u0435\u0434\u044C: ' + qCount + ' \u00B7 \u041A\u043E\u043C\u043C\u0435\u043D\u0442\u0430\u0440\u0438\u0435\u0432: ' + cmCount + ' \u00B7 \u0421\u0435\u0442\u043E\u043A: ' + nCount;
+  } catch (e) { console.warn('[MetaBot] refreshStats failed:', e.message); }
+}
+
+function showToast(msg) {
+  var el = document.querySelector('#configsaved');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(function() { el.style.display = 'none'; }, 1500);
+}
+
+async function renderTracked() {
+  try {
+    var list = await mbdb.getTrackedChannels();
+    var countEl = document.querySelector('#mbTrackedCount');
+    if (countEl) countEl.textContent = list.length ? '(' + list.length + ')' : '';
+    var ul = document.querySelector('#mbTrackedList');
+    if (!ul) return;
+    if (list.length === 0) {
+      ul.innerHTML = '<div style=\"color:#666;font-style:italic;padding:8px;text-align:center\">\u041D\u0435\u0442 \u043E\u0442\u0441\u043B\u0435\u0436\u0438\u0432\u0430\u0435\u043C\u044B\u0445 \u043A\u0430\u043D\u0430\u043B\u043E\u0432.<br>\u041E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 \u0432\u0438\u0434\u0435\u043E \u0438 \u043D\u0430\u0436\u043C\u0438\u0442\u0435 [\uD83D\uDC41 \u041E\u0442\u0441\u043B\u0435\u0436\u0438\u0432\u0430\u0442\u044C] \u043F\u043E\u0434 \u0430\u0432\u0442\u043E\u0440\u043E\u043C.</div>';
+      return;
+    }
+    ul.innerHTML = list.map(function(c) {
+      return '<div class=\"mb-tracked-item\"><span>' + (c.displayName || c.channelId) + '</span><span class=\"mb-remove\" data-id=\"' + c.channelId + '\">\u2715</span></div>';
+    }).join('');
+    ul.querySelectorAll('.mb-remove').forEach(function(el) {
+      el.onclick = async function() {
+        try { await mbdb.untrackChannel(el.dataset.id); renderTracked(); refreshStats(); } catch (e) { console.warn('[MetaBot] untrack failed:', e.message); }
+      };
+    });
+  } catch (e) { console.warn('[MetaBot] renderTracked failed:', e.message); }
+}
+
+async function renderNetworks() {
+  try {
+    var list = await mbdb.getNetworks();
+    var countEl = document.querySelector('#mbNetworksCount');
+    if (countEl) countEl.textContent = list.length ? '(' + list.length + ')' : '';
+    var ul = document.querySelector('#mbNetworksList');
+    if (!ul) return;
+    if (list.length === 0) {
+      ul.innerHTML = '<div style=\"color:#666;font-style:italic;padding:8px;text-align:center\">\u0421\u0435\u0442\u043A\u0438 \u043D\u0435 \u0432\u044B\u044F\u0432\u043B\u0435\u043D\u044B.<br>\u041D\u0430\u0436\u043C\u0438\u0442\u0435 [\uD83D\uDD78 \u041A\u043B\u0430\u0441\u0442\u0435\u0440\u0438\u0437\u043E\u0432\u0430\u0442\u044C] \u043F\u043E\u0441\u043B\u0435 \u0430\u043D\u0430\u043B\u0438\u0437\u0430 \u043F\u0430\u0442\u0442\u0435\u0440\u043D\u043E\u0432.</div>';
+      return;
+    }
+    ul.innerHTML = list.map(function(n) {
+      var color = n.name === 'PRO-KREMLIN' ? '#a44' : (n.name === 'PRO-OPPOSITION' ? '#4a8' : '#888');
+      return '<div class=\"mb-network-item\" data-cluster=\"' + n.clusterId + '\">' +
+        '<span style=\"font-weight:600;color:' + color + '\">' + n.name + '</span>' +
+        '<span style=\"color:#888;margin-left:8px\">' + n.members.length + ' \u043A\u0430\u043D\u0430\u043B\u043E\u0432</span>' +
+        '<span style=\"margin-left:auto;font-size:11px;color:#666\">' + new Date(n.detectedAt).toLocaleDateString() + '</span></div>';
+    }).join('');
+  } catch (e) { console.warn('[MetaBot] renderNetworks failed:', e.message); }
+}
+
+// ===== T12 — Watch page owner track button =====
+async function getCurrentVideoOwnerId() {
+  try {
+    var el = document.querySelector('ytd-video-owner-renderer #channel-name a, #owner #channel-name a');
+    if (!el) return null;
+    return await normalizeChannelId(el.href);
+  } catch (e) { return null; }
+}
+
+async function ensureTrackButton() {
+  try {
+    if (document.querySelector('#mbTrackOwnerBtn')) return;
+    var ownerEl = document.querySelector('ytd-video-owner-renderer #channel-name a, #owner #channel-name a');
+    if (!ownerEl) return;
+    var ownerId = await normalizeChannelId(ownerEl.href);
+    if (!ownerId) return;
+    var tracked = await mbdb.isTracked(ownerId);
+    var btn = document.createElement('button');
+    btn.id = 'mbTrackOwnerBtn';
+    btn.style.cssText = 'padding:4px 10px; margin-left:8px; border-radius:12px; border:none; cursor:pointer; font-size:12px; background:' + (tracked ? '#3a5' : '#444') + '; color:#fff;';
+    btn.textContent = tracked ? '\uD83D\uDC41 \u041E\u0442\u0441\u043B\u0435\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F \u2713' : '\uD83D\uDC41 \u041E\u0442\u0441\u043B\u0435\u0436\u0438\u0432\u0430\u0442\u044C';
+    btn.onclick = async function() {
+      try {
+        var isTracked = await mbdb.isTracked(ownerId);
+        if (isTracked) {
+          await mbdb.untrackChannel(ownerId);
+          btn.style.background = '#444';
+          btn.textContent = '\uD83D\uDC41 \u041E\u0442\u0441\u043B\u0435\u0436\u0438\u0432\u0430\u0442\u044C';
+        } else {
+          var displayNameEl = document.querySelector('ytd-video-owner-renderer #channel-name a, #owner #channel-name a');
+          var displayName = displayNameEl ? displayNameEl.textContent.trim() : ownerId;
+          await mbdb.trackChannel(ownerId, displayName);
+          btn.style.background = '#3a5';
+          btn.textContent = '\uD83D\uDC41 \u041E\u0442\u0441\u043B\u0435\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F \u2713';
+        }
+        refreshStats();
+        if (typeof renderTracked === 'function') renderTracked();
+      } catch (e) { console.warn('[MetaBot] track toggle failed:', e.message); }
+    };
+    var parent = ownerEl.closest('#channel-name, ytd-channel-name') || ownerEl.parentNode;
+    if (parent) parent.appendChild(btn);
+  } catch (e) { console.warn('[MetaBot] ensureTrackButton failed:', e.message); }
+}
+
+async function ensureTrackedBadge() {
+  try {
+    var existing = document.querySelector('#mbTrackedBadge');
+    if (existing) existing.remove();
+    var ownerId = await getCurrentVideoOwnerId();
+    if (!ownerId) return;
+    var tracked = await mbdb.isTracked(ownerId);
+    if (!tracked) return;
+    var badge = document.createElement('span');
+    badge.id = 'mbTrackedBadge';
+    badge.style.cssText = 'position:fixed;top:60px;right:20px;z-index:9999;background:#3a5;color:#fff;padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600;';
+    badge.textContent = '\uD83D\uDC41 \u041E\u0422\u0421\u041B\u0415\u0416\u0418\u0412\u0410\u0415\u0422\u0421\u042F';
+    document.body.appendChild(badge);
+  } catch (e) { console.warn('[MetaBot] ensureTrackedBadge failed:', e.message); }
+}
+
+// ===== T13 — Pattern analysis prompt =====
+var PATTERN_SYSTEM_PROMPT = 'You are a YouTube comment behavior pattern analyst.\nFor each channel, analyze their COMMENT SAMPLES and produce:\n\n1. themes: Object<theme_name, percentage> — what topics they comment on\n   (politics_russia, politics_world, entertainment, music, gaming, education, other)\n   Sum of percentages = 100.\n\n2. targets: Object<person_or_entity, {pro: 0-100, anti: 0-100}>\n   Common: Putin, Navalny, Kac, Soloviev, Pevchikh, Zelensky, RF_government, Opposition, Ukraine, USA, EU\n   Only include targets actually mentioned.\n\n3. network_signals: Object<signal, 0-100>\n   - pro_kremlin_score (pro-Putin/RF gov stance)\n   - anti_opposition_score (anti-Navalny/anti-Kac/anti-opposition)\n   - pro_opposition_score\n   - anti_kremlin_score\n   - whataboutism_score (deflection tactics)\n   - personal_attack_score (ad hominem)\n   - repetition_score (same talking points repeated)\n   - quality_score (0-100, organic engagement vs templated)\n\n4. summary: 1-sentence behavior description in Russian (max 100 chars)\n\nReturn ONLY JSON: {"patterns": [{channelId, themes, targets, network_signals, summary}]}';
+
+async function analyzePatternsBatch() {
+  try {
+    var queue = await mbdb.dequeueAnalysisBatch(20);
+    if (queue.length === 0) { showToast('\u041E\u0447\u0435\u0440\u0435\u0434\u044C \u0430\u043D\u0430\u043B\u0438\u0437\u0430 \u043F\u0443\u0441\u0442\u0430'); return; }
+    var channelData = [];
+    for (var i = 0; i < queue.length; i++) {
+      var ch = await mbdb.getChannel(queue[i].channelId);
+      var comments = await mbdb.getComments(queue[i].channelId, 10);
+      channelData.push({
+        channelId: queue[i].channelId,
+        label: ch ? ch.label : null,
+        confidence: ch ? ch.confidence : null,
+        joinDate: ch ? ch.joinDate : null,
+        commentSamples: comments.map(function(c) {
+          return {videoId: c.videoId, text: c.text, timestamp: c.timestamp};
+        }).filter(function(c) { return c.text && c.text.length > 5; }).slice(0, 8)
+      });
+    }
+    var response = await callDeepSeek([
+      {role: 'system', content: PATTERN_SYSTEM_PROMPT},
+      {role: 'user', content: JSON.stringify(channelData)}
+    ]);
+    var parsed = JSON.parse(response.choices[0].message.content);
+    if (parsed.patterns && Array.isArray(parsed.patterns)) {
+      for (var j = 0; j < parsed.patterns.length; j++) {
+        var p = parsed.patterns[j];
+        await mbdb.applyPatterns(p.channelId, {
+          themes: p.themes,
+          targets: p.targets,
+          network_signals: p.network_signals,
+          analysisSummary: p.summary,
+          aiAnalysisAt: Date.now()
+        });
+      }
+    }
+    showToast('\u041F\u0440\u043E\u0430\u043D\u0430\u043B\u0438\u0437\u0438\u0440\u043E\u0432\u0430\u043D\u043E: ' + parsed.patterns.length);
+    refreshStats();
+  } catch (e) {
+    console.warn('[MetaBot AI] analyzePatternsBatch failed:', e.message);
+    showToast('\u041E\u0448\u0438\u0431\u043A\u0430 \u0430\u043D\u0430\u043B\u0438\u0437\u0430: ' + e.message);
+  }
+}
+
+async function clusterNetworks() {
+  try {
+    var channels = await mbdb.getAllChannels();
+    var candidates = channels.filter(function(c) { return c.network_signals && c.label !== 'HUMAN'; });
+    if (candidates.length < 3) { showToast('\u041D\u0435\u0434\u043E\u0441\u0442\u0430\u0442\u043E\u0447\u043D\u043E \u0434\u0430\u043D\u043D\u044B\u0445 \u0434\u043B\u044F \u043A\u043B\u0430\u0441\u0442\u0435\u0440\u0438\u0437\u0430\u0446\u0438\u0438 (\u043D\u0443\u0436\u043D\u043E \u22653 \u043A\u0430\u043D\u0430\u043B\u0430)'); return; }
+    var signalKeys = ['pro_kremlin_score', 'anti_opposition_score', 'pro_opposition_score', 'anti_kremlin_score', 'whataboutism_score', 'personal_attack_score', 'repetition_score'];
+    var vectors = candidates.map(function(c) {
+      return {channelId: c.channelId, vec: signalKeys.map(function(k) { return c.network_signals[k] || 0; })};
+    });
+    var THRESHOLD = 30;
+    var parent = {};
+    var find = function(x) { return parent[x] === x ? x : (parent[x] = find(parent[x])); };
+    var union = function(a, b) { var ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+    vectors.forEach(function(v) { parent[v.channelId] = v.channelId; });
+    for (var i = 0; i < vectors.length; i++) {
+      for (var ii = i + 1; ii < vectors.length; ii++) {
+        var dist = Math.sqrt(vectors[i].vec.reduce(function(s, x, k) { return s + Math.pow(x - vectors[ii].vec[k], 2); }, 0));
+        if (dist < THRESHOLD) union(vectors[i].channelId, vectors[ii].channelId);
+      }
+    }
+    var groups = {};
+    vectors.forEach(function(v) {
+      var root = find(v.channelId);
+      if (!groups[root]) groups[root] = [];
+      groups[root].push(v.channelId);
+    });
+    var createdCount = 0;
+    for (var root in groups) {
+      var members = groups[root];
+      if (members.length < 3) continue;
+      var avgSignals = {};
+      signalKeys.forEach(function(k) {
+        avgSignals[k] = members.reduce(function(s, mid) {
+          var c = candidates.find(function(c2) { return c2.channelId === mid; });
+          return s + ((c && c.network_signals[k]) || 0);
+        }, 0) / members.length;
+      });
+      var name = 'UNKNOWN';
+      if (avgSignals.pro_kremlin_score > 60) name = 'PRO-KREMLIN';
+      else if (avgSignals.pro_opposition_score > 60) name = 'PRO-OPPOSITION';
+      else if (avgSignals.anti_kremlin_score > 60) name = 'ANTI-KREMLIN';
+      else if (avgSignals.anti_opposition_score > 60) name = 'ANTI-OPPOSITION';
+      var clusterId = 'cluster_' + Date.now() + '_' + createdCount;
+      await mbdb.upsertNetwork({
+        clusterId: clusterId,
+        name: name,
+        description: 'Auto-detected cluster, ' + members.length + ' members, avg pro-K ' + avgSignals.pro_kremlin_score.toFixed(0) + ', anti-opp ' + avgSignals.anti_opposition_score.toFixed(0),
+        signature: avgSignals,
+        members: members,
+        detectedAt: Date.now()
+      });
+      for (var mi = 0; mi < members.length; mi++) {
+        await mbdb.upsertChannel({channelId: members[mi], network_cluster_id: clusterId});
+      }
+      createdCount++;
+    }
+    showToast('\u0421\u043E\u0437\u0434\u0430\u043D\u043E \u0441\u0435\u0442\u043E\u043A: ' + createdCount);
+    refreshStats();
+    if (typeof renderNetworks === 'function') renderNetworks();
+  } catch (e) {
+    console.warn('[MetaBot AI] clusterNetworks failed:', e.message);
+    showToast('\u041E\u0448\u0438\u0431\u043A\u0430 \u043A\u043B\u0430\u0441\u0442\u0435\u0440\u0438\u0437\u0430\u0446\u0438\u0438: ' + e.message);
+  }
+}
+
 console.log("[MetaBot for Youtube] Starting at URL: " + window.location);
 if (window.location.pathname == '/live_chat_replay' || window.location.pathname == '/live_chat') {
   console.log("[MetaBot for Youtube] Live Chat page detected. Skipping.");
 } else {
   waitforinit();
 }
+
+// T12 — Owner [👁 Отслеживать] button bootstrap.
+// ensureTrackButton was defined but never invoked. Hook into yt-navigate-finish,
+// initial load, and a MutationObserver on body so the button appears on every
+// watch page even after SPA navigation.
+function _mbBootstrapTrackButton() {
+  if (typeof ensureTrackButton !== 'function') return;
+  var run = function() {
+    if (/\/watch\?/.test(location.href)) {
+      ensureTrackButton();
+      if (typeof ensureTrackedBadge === 'function') ensureTrackedBadge();
+    }
+  };
+  // initial + delayed retries (YouTube hydrates owner element late)
+  setTimeout(run, 1500);
+  setTimeout(run, 4000);
+  setTimeout(run, 8000);
+  // SPA navigation
+  document.addEventListener('yt-navigate-finish', function() {
+    setTimeout(run, 1500);
+    setTimeout(run, 4000);
+  });
+  // Fallback: MutationObserver — if owner renderer appears later
+  try {
+    var mo = new MutationObserver(function() {
+      if (!document.querySelector('#mbTrackOwnerBtn') && document.querySelector('ytd-video-owner-renderer #channel-name a, #owner #channel-name a')) {
+        run();
+      }
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+  } catch (e) {}
+}
+_mbBootstrapTrackButton();
 
 function waitforinit() {
   // Wait for both DOM head AND GM_config to be fully initialized.
@@ -734,7 +1191,7 @@ function insertannNew(jNode) {
   ytoinfosspan.style = 'font-size:1.4rem;max-width:640px;margin:-10px auto 1em auto;display:none';
   $(jNode).find('div#title').after(ytoinfosspan);
   var settingsspan = document.createElement('span');
-  settingsspan.innerHTML = '<span style="float:left;width:100px"><img src="https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png" width="100px" height="100px" /></span><span style="float:right;margin: 0 0 0 10px;width:525px"><span style="font-weight:500">' + GM_info.script.name + ' v' + GM_info.script.version + '</span>\u2003<span id="urlgithub" style="cursor:pointer" data-url="https://github.com/asrdri/yt-metabot-user-js/">GitHub</span>\u2003<span id="urlissues" style="cursor:pointer" data-url="https://github.com/asrdri/yt-metabot-user-js/issues">Предложения и баги</span>\u2003<span id="urllists" style="cursor:pointer" data-url="https://github.com/asrdri/yt-metabot-user-js/issues/23">Списки</span><span class="badge badge-style-type-simple ytd-badge-supported-renderer" style="margin:4px 0 4px 0;text-align:center">Настройки</span>Комментарии от известных ботов из ЕРКЮ <select id="mbcddm1"><option value="1">помечать</option><option value="2">скрывать</option></select><span id="mbcswg1"><br style="line-height:2em"><label title="Пункт 5.1.H Условий использования YouTube не нарушается - запросы отправляются со значительным интервалом"><input type="checkbox" id="mbcbox1">Автоматически ставить <span style="font-family: Segoe UI Symbol">\uD83D\uDC4E</span> комментариям от ботов из ЕРКЮ</label></span><br style="line-height:2em"><label title="Актуально для русского интерфейса и небольшой ширины окна браузера"><input type="checkbox" id="mbcbox2">Скрывать длинные подписи кнопок Мне (не) понравилось / Поделиться</label><br style="line-height:2em"><label><input type="checkbox" id="mbcbox3">Дополнительные списки</label><span id="mbcswg2"><br style="line-height:2em">' + iconp1 + ' Закладки: <input type="color" id="colorpersonal" style="height: 1.8rem; width: 40px"><br style="line-height:1.8em"><textarea id="listpersonal" rows="3" style="width: 500px"></textarea><br style="line-height:1.2em">Сторонние списки:<br>' + iconc1 + descc1 + '<input type="text" id="listcustom1" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom1" style="height: 1.8rem; width: 40px"><br>' + iconc2 + descc2 + '<input type="text" id="listcustom2" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom2" style="height: 1.8rem; width: 40px"><br>' + iconc3 + descc3 + '<input type="text" id="listcustom3" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom3" style="height: 1.8rem; width: 40px"><br>' + iconc4 + descc4 + '<input type="text" id="listcustom4" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom4" style="height: 1.8rem; width: 40px"><br>' + iconc5 + descc5 + '<input type="text" id="listcustom5" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom5" style="height: 1.8rem; width: 40px"></span><br style="line-height:2em">Классический дизайн YouTube:' + Aparse("\u2003[Chrome](https://chrome.google.com/webstore/detail/youtube-redux/mdgdgieddpndgjlmeblhjgljejejkikf)\u2003[Firefox](https://addons.mozilla.org/firefox/addon/youtube-redux/)") + '<br><span id="resetbtn" style="cursor:pointer">Сбросить настройки</span><span id="configsaved" class="badge badge-style-type-simple ytd-badge-supported-renderer" style="margin:4px 0 4px 0;text-align:center;display:none;-webkit-transition: background-color 0.3s ease-in-out;-moz-transition: background-color 0.3s ease-in-out;-ms-transition: background-color 0.3s ease-in-out;-o-transition: background-color 0.3s ease-in-out;transition: background-color 0.3s ease-in-out;">Настройки сохранены. Для вступления в силу необходимо <span style="cursor:pointer;text-decoration:underline" onclick="javascript:window.location.reload();"><span style="font-family: Segoe UI Symbol">\uD83D\uDD03</span>обновить страницу</span>.</span><br style="line-height:2em"><button id="mbClassifyBtn" style="padding:6px 16px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;cursor:pointer">\uD83E\uDD16 AI Classify now</button><br style="line-height:1.5em"><label style="font-size:13px">API Key: <input type="password" id="deepseek_api_key" style="width:280px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:3px 6px" placeholder="sk-..."></label></span>';
+  settingsspan.innerHTML = `<style>#config{font:13px/1.5 ui-sans-serif,system-ui,sans-serif;color:#ddd;background:#0e0e0e;border-radius:8px;padding:0;position:relative}#config .mb-header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #2a2a2a}#config .mb-header img{width:32px;height:32px;border-radius:4px}#config .mb-header h2{margin:0;font-size:15px;font-weight:600}#config .mb-version{margin-left:auto;font-size:11px;color:#777}#config .mb-section{padding:12px 16px;border-bottom:1px solid #1f1f1f}#config .mb-section h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:600}#config .mb-row{display:flex;align-items:center;gap:10px;margin:6px 0}#config .mb-row label{flex:1;cursor:pointer}#config input[type="checkbox"]{width:16px;height:16px;cursor:pointer;accent-color:#5af}#config input[type="password"],#config input[type="text"],#config select{background:#1a1a1a;color:#eee;border:1px solid #333;border-radius:4px;padding:5px 8px;font-size:13px;outline:none}#config input:focus,#config select:focus{border-color:#5af}#config .mb-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#2a3a4f;color:#fff;border:1px solid #3a5070;border-radius:4px;cursor:pointer;font-size:13px}#config .mb-btn:hover{background:#3a5070}#config .mb-btn.primary{background:#2a5a3a;border-color:#3a703a}#config .mb-btn.primary:hover{background:#3a703a}#config .mb-tracked-list,#config .mb-networks-list{max-height:120px;overflow-y:auto;background:#161616;padding:6px;border:1px solid #2a2a2a;border-radius:4px;font-size:12px}#config .mb-tracked-item,#config .mb-network-item{display:flex;align-items:center;padding:4px 6px;border-radius:3px}#config .mb-tracked-item:hover,#config .mb-network-item:hover{background:#1f1f1f}#config .mb-remove{color:#f55;cursor:pointer;margin-left:auto;padding:0 6px}#config .mb-stats{font-size:11px;color:#888;margin-top:6px}#config .mb-toast{position:absolute;top:8px;right:8px;background:#2a5a3a;color:#fff;padding:6px 10px;border-radius:4px;font-size:12px;display:none;z-index:10}</style><div class="mb-header"><img src="https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png"><h2>MetaBot · AI Bot Detection</h2><span class="mb-version">v${GM_info.script.version}</span></div><div class="mb-section"><h3>DeepSeek API</h3><div class="mb-row"><label for="deepseek_api_key">API Key:</label><input type="password" id="deepseek_api_key" placeholder="sk-..." style="width:280px"></div><div class="mb-row"><label><input type="checkbox" id="mbAutoClassify"> Авто-классификация для tracked-каналов</label></div></div><div class="mb-section"><h3>Детекция ботов</h3><div style="font-size:11px;color:#888;margin-bottom:6px;line-height:1.5">DeepSeek AI + локальные эвристики (entropy, частота, кросс-канал) + публичные ресурсы:<br><a href="https://botnadzor.org" target="_blank" style="color:#6af">Ботнадзор</a> · <a href="https://euvsdisinfo.eu" target="_blank" style="color:#6af">EUvsDisinfo</a> · <a href="https://factcheck.by" target="_blank" style="color:#6af">Factcheck.BY</a> · <a href="https://dfrlab.org" target="_blank" style="color:#6af">DFRLab</a></div><div class="mb-row"><label>Действие при обнаружении:</label><select id="mbcddm1"><option value="1">Помечать</option><option value="2">Скрывать</option></select></div><div class="mb-row"><label><input type="checkbox" id="mbcbox1"> Авто-дизлайк ботам</label></div><div class="mb-row"><label><input type="checkbox" id="mbcbox2"> Скрывать длинные подписи Like/Dislike</label></div></div><div class="mb-section"><h3>Отслеживаемые каналы <span id="mbTrackedCount" style="font-weight:normal;color:#666"></span></h3><div class="mb-tracked-list" id="mbTrackedList"><div style="color:#666;font-style:italic;padding:8px;text-align:center">Нет отслеживаемых каналов.<br>Откройте видео и нажмите [👁 Отслеживать] под автором.</div></div></div><div class="mb-section"><h3>Известные ботосетки <span id="mbNetworksCount" style="font-weight:normal;color:#666"></span></h3><div class="mb-networks-list" id="mbNetworksList"><div style="color:#666;font-style:italic;padding:8px;text-align:center">Сетки не выявлены.<br>Нажмите [🕸 Кластеризовать] после анализа паттернов.</div></div></div><div class="mb-section"><h3>Действия</h3><div class="mb-row" style="flex-wrap:wrap;gap:6px"><button id="mbClassifyBtn" class="mb-btn primary">🤖 Классифицировать</button><button id="mbAnalyzePatternsBtn" class="mb-btn">🔍 Анализ паттернов</button><button id="mbClusterBtn" class="mb-btn">🕸 Кластеризовать</button></div><div class="mb-stats" id="mbStats">Каналов: 0 · Очередь: 0 · Комментариев: 0 · Сеток: 0</div></div><div class="mb-section" style="border-bottom:none;padding-top:8px"><div class="mb-row" style="font-size:11px;color:#666"><a id="urlgithub" data-url="https://github.com/asrdri/yt-metabot-user-js/" style="color:#6af;cursor:pointer">GitHub</a><span style="margin-left:auto"><span id="resetbtn" style="cursor:pointer;color:#a55">Сброс</span></span></div></div><span id="configsaved" class="mb-toast">Сохранено</span>`;
   settingsspan.id = 'config';
   settingsspan.classList.add("description");
   settingsspan.classList.add("content");
@@ -820,32 +1277,63 @@ function insertannNew(jNode) {
     saveconfigNew(jNode);
   });
   $(jNode).find('button#mbClassifyBtn').on('click', function() {
-    $(this).text('Classifying...').prop('disabled', true);
-    classifyBatch().then(function() {
-      $(jNode).find('button#mbClassifyBtn').text('\uD83E\uDD16 AI Classify now').prop('disabled', false);
-    });
+    var $btn = $(this);
+    var orig = $btn.text();
+    $btn.text('\u2026 \u041A\u043B\u0430\u0441\u0441\u0438\u0444\u0438\u0446\u0438\u0440\u0443\u044E').prop('disabled', true);
+    Promise.resolve(typeof classifyBatch === 'function' ? classifyBatch() : null)
+      .then(function() { $btn.text(orig).prop('disabled', false); refreshStats && refreshStats(); })
+      .catch(function(e) { console.warn('[MetaBot] classify failed:', e); $btn.text(orig).prop('disabled', false); });
   });
+  // T14 \u2014 missing handlers for analyze / cluster buttons
+  $(jNode).find('button#mbAnalyzePatternsBtn').on('click', function() {
+    var $btn = $(this);
+    var orig = $btn.text();
+    $btn.text('\u2026 \u0410\u043D\u0430\u043B\u0438\u0437\u0438\u0440\u0443\u044E').prop('disabled', true);
+    Promise.resolve(typeof analyzePatternsBatch === 'function' ? analyzePatternsBatch() : Promise.reject(new Error('analyzePatternsBatch undefined')))
+      .then(function() { $btn.text(orig).prop('disabled', false); refreshStats && refreshStats(); renderNetworks && renderNetworks(); })
+      .catch(function(e) { console.warn('[MetaBot] analyze failed:', e); $btn.text(orig).prop('disabled', false); showToast && showToast('\u041E\u0448\u0438\u0431\u043A\u0430: ' + e.message); });
+  });
+  $(jNode).find('button#mbClusterBtn').on('click', function() {
+    var $btn = $(this);
+    var orig = $btn.text();
+    $btn.text('\u2026 \u041A\u043B\u0430\u0441\u0442\u0435\u0440\u0438\u0437\u0443\u044E').prop('disabled', true);
+    Promise.resolve(typeof clusterNetworks === 'function' ? clusterNetworks() : Promise.reject(new Error('clusterNetworks undefined')))
+      .then(function() { $btn.text(orig).prop('disabled', false); refreshStats && refreshStats(); renderNetworks && renderNetworks(); })
+      .catch(function(e) { console.warn('[MetaBot] cluster failed:', e); $btn.text(orig).prop('disabled', false); showToast && showToast('\u041E\u0448\u0438\u0431\u043A\u0430: ' + e.message); });
+  });
+  // Track-owner button: ensure it exists on every cfg-button render too
+  if (typeof ensureTrackButton === 'function') ensureTrackButton();
 }
 
 function saveconfigNew(jNode) {
-  GM_config.set('option1', $(jNode).find("select#mbcddm1").val());
-  GM_config.set('option2', $(jNode).find("input#mbcbox1").is(":checked"));
-  GM_config.set('option3', $(jNode).find("input#mbcbox2").is(":checked"));
-  GM_config.set('option4', $(jNode).find("input#mbcbox3").is(":checked"));
-  GM_config.set('listp1', $(jNode).find("textarea#listpersonal").val());
-  GM_config.set('listc1', $(jNode).find("input#listcustom1").val());
-  GM_config.set('listc2', $(jNode).find("input#listcustom2").val());
-  GM_config.set('listc3', $(jNode).find("input#listcustom3").val());
-  GM_config.set('listc4', $(jNode).find("input#listcustom4").val());
-  GM_config.set('listc5', $(jNode).find("input#listcustom5").val());
-  GM_config.set('deepseek_api_key', $(jNode).find("input#deepseek_api_key").val());
-  GM_config.set('colorp1', parseColor($(jNode).find("input#colorpersonal").val(), true));
-  GM_config.set('colorc1', parseColor($(jNode).find("input#colorcustom1").val(), true));
-  GM_config.set('colorc2', parseColor($(jNode).find("input#colorcustom2").val(), true));
-  GM_config.set('colorc3', parseColor($(jNode).find("input#colorcustom3").val(), true));
-  GM_config.set('colorc4', parseColor($(jNode).find("input#colorcustom4").val(), true));
-  GM_config.set('colorc5', parseColor($(jNode).find("input#colorcustom5").val(), true));
-  arrayListP1 = GM_config.get('listp1').match(/[^\r\n=]+/g);
+  // Safe setter — current new UI dropped legacy inputs (listpersonal/listcustomN/colorN).
+  // Calling .val() on missing element returns undefined and overwrites stored values.
+  // Only save if the element exists in DOM.
+  function safeSet(key, sel, transform) {
+    var el = $(jNode).find(sel);
+    if (el.length === 0) return;
+    var v = el.is(':checkbox') ? el.is(':checked') : el.val();
+    if (v === undefined) return;
+    GM_config.set(key, transform ? transform(v) : v);
+  }
+  safeSet('option1', 'select#mbcddm1');
+  safeSet('option2', 'input#mbcbox1');
+  safeSet('option3', 'input#mbcbox2');
+  safeSet('option4', 'input#mbcbox3');
+  safeSet('listp1', 'textarea#listpersonal');
+  safeSet('listc1', 'input#listcustom1');
+  safeSet('listc2', 'input#listcustom2');
+  safeSet('listc3', 'input#listcustom3');
+  safeSet('listc4', 'input#listcustom4');
+  safeSet('listc5', 'input#listcustom5');
+  safeSet('deepseek_api_key', 'input#deepseek_api_key');
+  safeSet('colorp1', 'input#colorpersonal', function(v){ return parseColor(v, true); });
+  safeSet('colorc1', 'input#colorcustom1', function(v){ return parseColor(v, true); });
+  safeSet('colorc2', 'input#colorcustom2', function(v){ return parseColor(v, true); });
+  safeSet('colorc3', 'input#colorcustom3', function(v){ return parseColor(v, true); });
+  safeSet('colorc4', 'input#colorcustom4', function(v){ return parseColor(v, true); });
+  safeSet('colorc5', 'input#colorcustom5', function(v){ return parseColor(v, true); });
+  try { arrayListP1 = (GM_config.get('listp1') || '').match(/[^\r\n=]+/g); } catch (e) {}
   GM_config.save();
   $(jNode).find("span#configsaved").show();
   $(jNode).find("span#configsaved")[0].style.backgroundColor = 'rgba(40,150,230,1)';
