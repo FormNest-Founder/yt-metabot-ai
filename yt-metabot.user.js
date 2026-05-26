@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230303
+// @version      230401
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -629,22 +629,42 @@ async function renderNetworks() {
 // ===== T12 — Watch page owner track button =====
 async function getCurrentVideoOwnerId() {
   try {
-    var el = document.querySelector('ytd-video-owner-renderer #channel-name a, #owner #channel-name a');
+    var el = document.querySelector('ytd-video-owner-renderer #channel-name a, ytd-video-owner-renderer ytd-channel-name a, #owner #channel-name a, #upper-row #channel-name a, #meta #channel-name a, ytd-watch-metadata #owner a, ytd-video-owner-renderer a.yt-simple-endpoint');
     if (!el) return null;
     return await normalizeChannelId(el.href);
   } catch (e) { return null; }
 }
 
 async function ensureTrackButton() {
+  // Mutex against race conditions: MutationObserver + setTimeout series triggered
+  // ensureTrackButton 7+ times in parallel — all got null from querySelector,
+  // all created their own button (7 copies on one page).
+  if (window._mbCreatingTrackBtn) return;
+  window._mbCreatingTrackBtn = true;
   try {
-    if (document.querySelector('#mbTrackOwnerBtn')) return;
-    var ownerEl = document.querySelector('ytd-video-owner-renderer #channel-name a, #owner #channel-name a');
+    // Clean up any existing copies (incl. stale ones from previous SPA video)
+    var existing = document.querySelectorAll('[id^="mbTrackOwnerBtn"]');
+    existing.forEach(function(e){ e.remove(); });
+    // Wider selector pool — different channels (DW, Navalny, Дождь, etc.) use
+    // slightly different DOM. Try owner-renderer first, fall back to #upper-row.
+    var ownerEl = document.querySelector(
+      'ytd-video-owner-renderer #channel-name a,' +
+      'ytd-video-owner-renderer ytd-channel-name a,' +
+      '#owner #channel-name a,' +
+      '#upper-row #channel-name a,' +
+      '#meta #channel-name a,' +
+      'ytd-watch-metadata #owner a,' +
+      'ytd-video-owner-renderer a.yt-simple-endpoint'
+    );
     if (!ownerEl) return;
     var ownerId = await normalizeChannelId(ownerEl.href);
     if (!ownerId) return;
+    // After async wait — re-check, maybe another invocation already added it
+    if (document.querySelector('#mbTrackOwnerBtn-' + ownerId.replace(/[^A-Za-z0-9_-]/g,'_'))) return;
     var tracked = await mbdb.isTracked(ownerId);
     var btn = document.createElement('button');
-    btn.id = 'mbTrackOwnerBtn';
+    btn.id = 'mbTrackOwnerBtn-' + ownerId.replace(/[^A-Za-z0-9_-]/g,'_');
+    btn.classList.add('mbTrackOwnerBtn');
     btn.style.cssText = 'padding:4px 10px; margin-left:8px; border-radius:12px; border:none; cursor:pointer; font-size:12px; background:' + (tracked ? '#3a5' : '#444') + '; color:#fff;';
     btn.textContent = tracked ? '\uD83D\uDC41 \u041E\u0442\u0441\u043B\u0435\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044F \u2713' : '\uD83D\uDC41 \u041E\u0442\u0441\u043B\u0435\u0436\u0438\u0432\u0430\u0442\u044C';
     btn.onclick = async function() {
@@ -655,7 +675,7 @@ async function ensureTrackButton() {
           btn.style.background = '#444';
           btn.textContent = '\uD83D\uDC41 \u041E\u0442\u0441\u043B\u0435\u0436\u0438\u0432\u0430\u0442\u044C';
         } else {
-          var displayNameEl = document.querySelector('ytd-video-owner-renderer #channel-name a, #owner #channel-name a');
+          var displayNameEl = document.querySelector('ytd-video-owner-renderer #channel-name a, ytd-video-owner-renderer ytd-channel-name a, #owner #channel-name a, #upper-row #channel-name a, #meta #channel-name a, ytd-watch-metadata #owner a, ytd-video-owner-renderer a.yt-simple-endpoint');
           var displayName = displayNameEl ? displayNameEl.textContent.trim() : ownerId;
           await mbdb.trackChannel(ownerId, displayName);
           btn.style.background = '#3a5';
@@ -668,7 +688,14 @@ async function ensureTrackButton() {
     var parent = ownerEl.closest('#channel-name, ytd-channel-name') || ownerEl.parentNode;
     if (parent) parent.appendChild(btn);
   } catch (e) { console.warn('[MetaBot] ensureTrackButton failed:', e.message); }
+  finally { window._mbCreatingTrackBtn = false; }
 }
+
+// Cleanup orphan track buttons on SPA navigation
+document.addEventListener('yt-navigate-finish', function() {
+  var btns = document.querySelectorAll('[id^="mbTrackOwnerBtn"], .mbTrackOwnerBtn');
+  btns.forEach(function(b){ b.remove(); });
+});
 
 async function ensureTrackedBadge() {
   try {
@@ -722,6 +749,7 @@ async function analyzePatternsBatch() {
           analysisSummary: p.summary,
           aiAnalysisAt: Date.now()
         });
+        refreshBadgesForChannel(p.channelId);
       }
     }
     showToast('\u041F\u0440\u043E\u0430\u043D\u0430\u043B\u0438\u0437\u0438\u0440\u043E\u0432\u0430\u043D\u043E: ' + parsed.patterns.length);
@@ -785,6 +813,7 @@ async function clusterNetworks() {
       });
       for (var mi = 0; mi < members.length; mi++) {
         await mbdb.upsertChannel({channelId: members[mi], network_cluster_id: clusterId});
+        refreshBadgesForChannel(members[mi]);
       }
       createdCount++;
     }
@@ -828,7 +857,7 @@ function _mbBootstrapTrackButton() {
   // Fallback: MutationObserver — if owner renderer appears later
   try {
     var mo = new MutationObserver(function() {
-      if (!document.querySelector('#mbTrackOwnerBtn') && document.querySelector('ytd-video-owner-renderer #channel-name a, #owner #channel-name a')) {
+      if (document.querySelectorAll('.mbTrackOwnerBtn, [id^="mbTrackOwnerBtn"]').length === 0 && document.querySelector('ytd-video-owner-renderer #channel-name a, ytd-video-owner-renderer ytd-channel-name a, #owner #channel-name a, #upper-row #channel-name a, #meta #channel-name a, ytd-watch-metadata #owner a, ytd-video-owner-renderer a.yt-simple-endpoint')) {
         run();
       }
     });
@@ -1191,7 +1220,7 @@ function insertannNew(jNode) {
   ytoinfosspan.style = 'font-size:1.4rem;max-width:640px;margin:-10px auto 1em auto;display:none';
   $(jNode).find('div#title').after(ytoinfosspan);
   var settingsspan = document.createElement('span');
-  settingsspan.innerHTML = `<style>#config{font:13px/1.5 ui-sans-serif,system-ui,sans-serif;color:#ddd;background:#0e0e0e;border-radius:8px;padding:0;position:relative}#config .mb-header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #2a2a2a}#config .mb-header img{width:32px;height:32px;border-radius:4px}#config .mb-header h2{margin:0;font-size:15px;font-weight:600}#config .mb-version{margin-left:auto;font-size:11px;color:#777}#config .mb-section{padding:12px 16px;border-bottom:1px solid #1f1f1f}#config .mb-section h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:600}#config .mb-row{display:flex;align-items:center;gap:10px;margin:6px 0}#config .mb-row label{flex:1;cursor:pointer}#config input[type="checkbox"]{width:16px;height:16px;cursor:pointer;accent-color:#5af}#config input[type="password"],#config input[type="text"],#config select{background:#1a1a1a;color:#eee;border:1px solid #333;border-radius:4px;padding:5px 8px;font-size:13px;outline:none}#config input:focus,#config select:focus{border-color:#5af}#config .mb-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#2a3a4f;color:#fff;border:1px solid #3a5070;border-radius:4px;cursor:pointer;font-size:13px}#config .mb-btn:hover{background:#3a5070}#config .mb-btn.primary{background:#2a5a3a;border-color:#3a703a}#config .mb-btn.primary:hover{background:#3a703a}#config .mb-tracked-list,#config .mb-networks-list{max-height:120px;overflow-y:auto;background:#161616;padding:6px;border:1px solid #2a2a2a;border-radius:4px;font-size:12px}#config .mb-tracked-item,#config .mb-network-item{display:flex;align-items:center;padding:4px 6px;border-radius:3px}#config .mb-tracked-item:hover,#config .mb-network-item:hover{background:#1f1f1f}#config .mb-remove{color:#f55;cursor:pointer;margin-left:auto;padding:0 6px}#config .mb-stats{font-size:11px;color:#888;margin-top:6px}#config .mb-toast{position:absolute;top:8px;right:8px;background:#2a5a3a;color:#fff;padding:6px 10px;border-radius:4px;font-size:12px;display:none;z-index:10}</style><div class="mb-header"><img src="https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png"><h2>MetaBot · AI Bot Detection</h2><span class="mb-version">v${GM_info.script.version}</span></div><div class="mb-section"><h3>DeepSeek API</h3><div class="mb-row"><label for="deepseek_api_key">API Key:</label><input type="password" id="deepseek_api_key" placeholder="sk-..." style="width:280px"></div><div class="mb-row"><label><input type="checkbox" id="mbAutoClassify"> Авто-классификация для tracked-каналов</label></div></div><div class="mb-section"><h3>Детекция ботов</h3><div style="font-size:11px;color:#888;margin-bottom:6px;line-height:1.5">DeepSeek AI + локальные эвристики (entropy, частота, кросс-канал) + публичные ресурсы:<br><a href="https://botnadzor.org" target="_blank" style="color:#6af">Ботнадзор</a> · <a href="https://euvsdisinfo.eu" target="_blank" style="color:#6af">EUvsDisinfo</a> · <a href="https://factcheck.by" target="_blank" style="color:#6af">Factcheck.BY</a> · <a href="https://dfrlab.org" target="_blank" style="color:#6af">DFRLab</a></div><div class="mb-row"><label>Действие при обнаружении:</label><select id="mbcddm1"><option value="1">Помечать</option><option value="2">Скрывать</option></select></div><div class="mb-row"><label><input type="checkbox" id="mbcbox1"> Авто-дизлайк ботам</label></div><div class="mb-row"><label><input type="checkbox" id="mbcbox2"> Скрывать длинные подписи Like/Dislike</label></div></div><div class="mb-section"><h3>Отслеживаемые каналы <span id="mbTrackedCount" style="font-weight:normal;color:#666"></span></h3><div class="mb-tracked-list" id="mbTrackedList"><div style="color:#666;font-style:italic;padding:8px;text-align:center">Нет отслеживаемых каналов.<br>Откройте видео и нажмите [👁 Отслеживать] под автором.</div></div></div><div class="mb-section"><h3>Известные ботосетки <span id="mbNetworksCount" style="font-weight:normal;color:#666"></span></h3><div class="mb-networks-list" id="mbNetworksList"><div style="color:#666;font-style:italic;padding:8px;text-align:center">Сетки не выявлены.<br>Нажмите [🕸 Кластеризовать] после анализа паттернов.</div></div></div><div class="mb-section"><h3>Действия</h3><div class="mb-row" style="flex-wrap:wrap;gap:6px"><button id="mbClassifyBtn" class="mb-btn primary">🤖 Классифицировать</button><button id="mbAnalyzePatternsBtn" class="mb-btn">🔍 Анализ паттернов</button><button id="mbClusterBtn" class="mb-btn">🕸 Кластеризовать</button></div><div class="mb-stats" id="mbStats">Каналов: 0 · Очередь: 0 · Комментариев: 0 · Сеток: 0</div></div><div class="mb-section" style="border-bottom:none;padding-top:8px"><div class="mb-row" style="font-size:11px;color:#666"><a id="urlgithub" data-url="https://github.com/asrdri/yt-metabot-user-js/" style="color:#6af;cursor:pointer">GitHub</a><span style="margin-left:auto"><span id="resetbtn" style="cursor:pointer;color:#a55">Сброс</span></span></div></div><span id="configsaved" class="mb-toast">Сохранено</span>`;
+  settingsspan.innerHTML = `<style>#config{font:13px/1.5 ui-sans-serif,system-ui,sans-serif;color:#ddd;background:#0e0e0e;border-radius:8px;padding:0;position:relative}#config .mb-header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #2a2a2a}#config .mb-header img{width:32px;height:32px;border-radius:4px}#config .mb-header h2{margin:0;font-size:15px;font-weight:600}#config .mb-version{margin-left:auto;font-size:11px;color:#777}#config .mb-section{padding:12px 16px;border-bottom:1px solid #1f1f1f}#config .mb-section h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:600}#config .mb-row{display:flex;align-items:center;gap:10px;margin:6px 0}#config .mb-row label{flex:1;cursor:pointer}#config input[type="checkbox"]{width:16px;height:16px;cursor:pointer;accent-color:#5af}#config input[type="password"],#config input[type="text"],#config select{background:#1a1a1a;color:#eee;border:1px solid #333;border-radius:4px;padding:5px 8px;font-size:13px;outline:none}#config input:focus,#config select:focus{border-color:#5af}#config .mb-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#2a3a4f;color:#fff;border:1px solid #3a5070;border-radius:4px;cursor:pointer;font-size:13px}#config .mb-btn:hover{background:#3a5070}#config .mb-btn.primary{background:#2a5a3a;border-color:#3a703a}#config .mb-btn.primary:hover{background:#3a703a}#config .mb-tracked-list,#config .mb-networks-list{max-height:120px;overflow-y:auto;background:#161616;padding:6px;border:1px solid #2a2a2a;border-radius:4px;font-size:12px}#config .mb-tracked-item,#config .mb-network-item{display:flex;align-items:center;padding:4px 6px;border-radius:3px}#config .mb-tracked-item:hover,#config .mb-network-item:hover{background:#1f1f1f}#config .mb-remove{color:#f55;cursor:pointer;margin-left:auto;padding:0 6px}#config .mb-stats{font-size:11px;color:#888;margin-top:6px}#config .mb-toast{position:absolute;top:8px;right:8px;background:#2a5a3a;color:#fff;padding:6px 10px;border-radius:4px;font-size:12px;display:none;z-index:10}</style><div class="mb-header"><img src="https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png"><h2>MetaBot · AI Bot Detection</h2><span class="mb-version">v${GM_info.script.version}</span></div><div class="mb-section"><h3>DeepSeek API</h3><div class="mb-row"><label for="deepseek_api_key">API Key:</label><input type="password" id="deepseek_api_key" placeholder="sk-..." style="width:280px"></div><div class="mb-row"><label><input type="checkbox" id="mbAutoClassify"> Авто-классификация для tracked-каналов</label></div></div><div class="mb-section"><h3>Детекция ботов</h3><div style="font-size:11px;color:#888;margin-bottom:6px;line-height:1.5">DeepSeek AI + локальные эвристики (entropy, частота, кросс-канал) + публичные ресурсы:<br><a href="https://botnadzor.org" target="_blank" style="color:#6af">Ботнадзор</a> · <a href="https://euvsdisinfo.eu" target="_blank" style="color:#6af">EUvsDisinfo</a> · <a href="https://factcheck.by" target="_blank" style="color:#6af">Factcheck.BY</a> · <a href="https://dfrlab.org" target="_blank" style="color:#6af">DFRLab</a></div><div class="mb-row"><label>Действие при обнаружении:</label><select id="mbcddm1"><option value="1">Помечать</option><option value="2">Скрывать</option></select></div><div class="mb-row"><label><input type="checkbox" id="mbcbox1"> Авто-дизлайк ботам</label></div><div class="mb-row"><label><input type="checkbox" id="mbcbox2"> Скрывать длинные подписи Like/Dislike</label></div></div><div class="mb-section"><h3>Отслеживаемые каналы <span id="mbTrackedCount" style="font-weight:normal;color:#666"></span></h3><div class="mb-tracked-list" id="mbTrackedList"><div style="color:#666;font-style:italic;padding:8px;text-align:center">Нет отслеживаемых каналов.<br>Откройте видео и нажмите [👁 Отслеживать] под автором.</div></div></div><div class="mb-section"><h3>Известные ботосетки <span id="mbNetworksCount" style="font-weight:normal;color:#666"></span></h3><div class="mb-networks-list" id="mbNetworksList"><div style="color:#666;font-style:italic;padding:8px;text-align:center">Сетки не выявлены.<br>Нажмите [🕸 Кластеризовать] после анализа паттернов.</div></div></div><div class="mb-section"><h3>Действия</h3><div class="mb-row" style="flex-wrap:wrap;gap:6px"><button id="mbClassifyBtn" class="mb-btn primary">🤖 Классифицировать</button><button id="mbAnalyzePatternsBtn" class="mb-btn">🔍 Анализ паттернов</button><button id="mbClusterBtn" class="mb-btn">🕸 Кластеризовать</button></div><div class="mb-stats" id="mbStats">Каналов: 0 · Очередь: 0 · Комментариев: 0 · Сеток: 0</div></div><div class="mb-section" style="border-bottom:none;padding-top:8px"><div class="mb-row" style="font-size:11px;color:#666"><a id="urlgithub" data-url="https://github.com/asrdri/yt-metabot-user-js/" style="color:#6af;cursor:pointer">GitHub</a><span id="mbAboutBtn" style="cursor:pointer;color:#6af;margin:0 12px">ℹ️ О скрипте</span><span style="margin-left:auto"><span id="resetbtn" style="cursor:pointer;color:#a55">Сброс</span></span></div></div><span id="configsaved" class="mb-toast">Сохранено</span>`;
   settingsspan.id = 'config';
   settingsspan.classList.add("description");
   settingsspan.classList.add("content");
@@ -1300,6 +1329,63 @@ function insertannNew(jNode) {
     Promise.resolve(typeof clusterNetworks === 'function' ? clusterNetworks() : Promise.reject(new Error('clusterNetworks undefined')))
       .then(function() { $btn.text(orig).prop('disabled', false); refreshStats && refreshStats(); renderNetworks && renderNetworks(); })
       .catch(function(e) { console.warn('[MetaBot] cluster failed:', e); $btn.text(orig).prop('disabled', false); showToast && showToast('\u041E\u0448\u0438\u0431\u043A\u0430: ' + e.message); });
+  });
+  $(jNode).find('span#mbAboutBtn').on('click', function() {
+    var overlay = document.createElement('div');
+    overlay.id = 'mbAboutOverlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;font:13px/1.6 ui-sans-serif,system-ui,sans-serif;color:#ddd';
+    overlay.innerHTML =
+      '<div style="background:#0e0e0e;border:1px solid #2a2a2a;border-radius:8px;padding:24px;max-width:680px;max-height:80vh;overflow-y:auto;position:relative">' +
+      '<span style="position:absolute;top:8px;right:14px;cursor:pointer;font-size:20px;color:#888" id="mbAboutClose">×</span>' +
+      '<h2 style="margin:0 0 12px;font-size:18px;color:#fff">MetaBot · AI Bot Detection</h2>' +
+      '<p style="color:#aaa;margin:0 0 16px">Userscript для YouTube — детектирует ботов, новорегов, координированные сети в комментариях.</p>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🎯 Что делает</h3>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc">' +
+        '<li><b style="color:#fb8c00">🆕 Новореги</b> — каналы, зарегистрированные менее 7 дней до публикации видео</li>' +
+        '<li><b style="color:#e53935">🤖 Боты</b> — AI-классификация поведения (DeepSeek V4) + база ЕРКЮ</li>' +
+        '<li><b style="color:#8e24aa">🕸 Ботосетки</b> — кластеризация каналов по поведенческим паттернам</li>' +
+        '<li><b style="color:#fbc02d">⚠️ Подозрительные</b> — низкая уверенность бот-сигналов</li>' +
+        '<li><b style="color:#43a047">✓ Люди</b> — органичная активность</li>' +
+      '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🔬 Методы</h3>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc">' +
+        '<li>Сбор комментариев + метаданных каналов локально в IndexedDB</li>' +
+        '<li>AI классификация через <b>DeepSeek V4</b> (label + confidence + reasoning)</li>' +
+        '<li>Анализ паттернов: themes, targets (Putin/Navalny/Kac/...), network_signals (pro-kremlin, anti-opposition, whataboutism, ...)</li>' +
+        '<li>Кластеризация ботосеток: Euclidean distance + union-find по signals</li>' +
+        '<li>Кросс-канальное отслеживание: что комментирует на нескольких каналах</li>' +
+      '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🛠 Инструменты</h3>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc">' +
+        '<li><b>DeepSeek API</b> — LLM-классификация (~$3/мес при 30K каналов)</li>' +
+        '<li><b>IndexedDB</b> — локальная база каналов / комментариев / сетей</li>' +
+        '<li><b>Tampermonkey/Violentmonkey</b> — runtime userscript</li>' +
+        '<li><b>YouTube DOM scraping</b> — joinDate, subs, videoCount из /about</li>' +
+        '<li><b>Return YouTube Dislike API</b> — счётчик дислайков</li>' +
+      '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">📚 Базы и источники</h3>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc">' +
+        '<li><a href="https://botnadzor.org" target="_blank" style="color:#6af">Ботнадзор</a> — RU база ботов VK (6.1M комментариев, GitHub: <a href="https://github.com/botnadzor/extension" target="_blank" style="color:#6af">extension</a>)</li>' +
+        '<li><a href="https://euvsdisinfo.eu" target="_blank" style="color:#6af">EUvsDisinfo</a> — EU EEAS публичная база дезинфо-нарративов</li>' +
+        '<li><a href="https://factcheck.by/eng/news/youtube_botnet_march2025/" target="_blank" style="color:#6af">Factcheck.BY</a> — мониторинг YouTube-ботов RU/BY</li>' +
+        '<li><a href="https://dfrlab.org/2025/02/24/russia-pravda-network-expands-worldwide/" target="_blank" style="color:#6af">DFRLab</a> — Pravda Network (~190 сайтов), Operation Overload</li>' +
+        '<li><a href="https://novayagazeta.eu/articles/2025/12/25/o-chem-sporili-boty" target="_blank" style="color:#6af">НГ Европа</a> — расследования по ботам 2024-2025</li>' +
+        '<li><a href="https://github.com/asrdri/yt-metabot-user-js" target="_blank" style="color:#6af">ЕРКЮ (FeignedAccomplice/YOUTUBOTS)</a> — оригинальная база, заброшена с 2021 (~5949 IDs)</li>' +
+      '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">📄 Академические работы</h3>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc;font-size:12px">' +
+        '<li><a href="https://arxiv.org/pdf/2005.06558" target="_blank" style="color:#6af">Beskow & Carley 2020</a> — Russian trolls (MH17)</li>' +
+        '<li><a href="https://arxiv.org/pdf/2311.05791" target="_blank" style="color:#6af">Shajari 2023</a> — YouTube commenter mob detection (Graph2Vec)</li>' +
+        '<li><a href="https://arxiv.org/pdf/2410.22716" target="_blank" style="color:#6af">Cinelli WWW\'25</a> — Cross-Platform CIB</li>' +
+      '</ul>' +
+      '<div style="margin-top:18px;padding-top:12px;border-top:1px solid #2a2a2a;color:#666;font-size:11px">' +
+        'Версия: v' + GM_info.script.version + ' · Форк MetaBot для YouTube (asrdri/yt-metabot-user-js)' +
+      '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    var closeIt = function() { overlay.remove(); };
+    overlay.querySelector('#mbAboutClose').onclick = closeIt;
+    overlay.onclick = function(e) { if (e.target === overlay) closeIt(); };
   });
   // Track-owner button: ensure it exists on every cfg-button render too
   if (typeof ensureTrackButton === 'function') ensureTrackButton();
@@ -1703,18 +1789,124 @@ async function procdateNew(jNode, response, url) {
   }
 }
 
+var MB_COLORS = { BOT:'#e53935', NETWORK:'#8e24aa', NEW_REG:'#fb8c00', SUSPECT:'#fbc02d', HUMAN:'#43a047', UNKNOWN:'#757575' };
+var MB_BADGES = { BOT:'🤖 БОТ', NETWORK:'🕸 СЕТЬ', NEW_REG:'🆕 НОВОРЕГ', SUSPECT:'⚠️ ПОДОЗР', HUMAN:'✓ ЧЕЛОВЕК', UNKNOWN:'? UNK' };
+
+function getVideoPublishDate() {
+  if (window._mbCurrentVideoPublishDate) return window._mbCurrentVideoPublishDate;
+  var src = null;
+  var meta = document.querySelector('meta[itemprop="datePublished"]');
+  if (meta && meta.content) src = meta.content;
+  if (!src) {
+    var info = document.querySelector('#info-strings yt-formatted-string, ytd-video-primary-info-renderer #date yt-formatted-string');
+    if (info && info.textContent) src = info.textContent;
+  }
+  if (!src) {
+    try {
+      var m = document.documentElement.innerHTML.match(/"publishDate":\{"simpleText":"([^"]+)"/);
+      if (m) src = m[1];
+    } catch (e) {}
+  }
+  if (!src) return null;
+  var d = new Date(src);
+  if (isNaN(d)) return null;
+  window._mbCurrentVideoPublishDate = d;
+  return d;
+}
+document.addEventListener('yt-navigate-finish', function() {
+  window._mbCurrentVideoPublishDate = null;
+});
+
+function isNewReg(joinDate, videoPublishDate) {
+  if (!joinDate || !videoPublishDate) return false;
+  var join = new Date(joinDate);
+  var pub = new Date(videoPublishDate);
+  if (isNaN(join) || isNaN(pub)) return false;
+  var diffDays = (pub.getTime() - join.getTime()) / (1000 * 60 * 60 * 24);
+  return diffDays >= -1 && diffDays < 7;
+}
+
 function applyBadge(jNode, channel) {
-  if (!channel || !channel.label || channel.label === 'UNKNOWN') return;
-  var colors = {BOT: '#ff5050', SUSPECT: '#ffaa00', HUMAN: '#50c050', UNKNOWN: '#888'};
-  var author = jNode.querySelector('#author-text, #header-author');
-  if (!author) return;
-  if (author.querySelector('.mb-ai-badge')) return;
-  var badge = document.createElement('span');
-  badge.className = 'mb-ai-badge';
-  badge.style.cssText = 'color: ' + (colors[channel.label] || '#888') + '; margin-left: 6px; font-weight: bold; cursor: help; font-size: 12px;';
-  badge.textContent = '[' + channel.label + ']';
-  badge.title = 'Confidence: ' + Math.round(channel.confidence * 100) + '%\nReason: ' + channel.reasoning;
-  author.appendChild(badge);
+  try {
+    var root = jNode instanceof Element ? jNode : (jNode[0] || jNode);
+    if (!root || !root.querySelector) return;
+    var author = root.querySelector('#author-text');
+    if (!author) return;
+    var oldBadge = author.parentNode.querySelector('.mb-ai-badge');
+    if (oldBadge) oldBadge.remove();
+    var thread = root.closest ? root.closest('ytd-comment-thread-renderer') : null;
+    var states = [];
+    var inErky = (typeof arrayERKY !== 'undefined' && arrayERKY.indexOf(channel.channelId) >= 0);
+    if (channel.label === 'BOT' || inErky) states.push('BOT');
+    if (channel.network_cluster_id) states.push('NETWORK');
+    if (isNewReg(channel.joinDate, getVideoPublishDate())) states.push('NEW_REG');
+    if (channel.label === 'SUSPECT' && states.indexOf('SUSPECT') < 0) states.push('SUSPECT');
+    if (channel.label === 'HUMAN' && states.length === 0) states.push('HUMAN');
+    if (states.length === 0) states.push('UNKNOWN');
+    var primary = states[0];
+    var container = document.createElement('span');
+    container.className = 'mb-ai-badge';
+    container.style.cssText = 'margin-left:8px;font-size:11px;font-weight:600;cursor:help;display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap';
+    states.forEach(function(state, i) {
+      if (i > 0) {
+        var sep = document.createElement('span');
+        sep.textContent = '·';
+        sep.style.cssText = 'color:#666;margin:0 2px';
+        container.appendChild(sep);
+      }
+      var pill = document.createElement('span');
+      pill.style.cssText = 'background:' + MB_COLORS[state] + '22;color:' + MB_COLORS[state] + ';padding:2px 6px;border-radius:10px;border:1px solid ' + MB_COLORS[state] + '55';
+      pill.textContent = MB_BADGES[state];
+      container.appendChild(pill);
+    });
+    var lines = [];
+    lines.push(primary + (channel.confidence ? ' · ' + Math.round(channel.confidence*100) + '%' : ''));
+    if (channel.analysisSummary) lines.push(channel.analysisSummary);
+    else if (channel.reasoning) lines.push(channel.reasoning);
+    if (channel.joinDate) {
+      var pub = getVideoPublishDate();
+      var ageLine = 'Зарегистрирован: ' + channel.joinDate;
+      if (pub) {
+        var diff = Math.floor((new Date(pub).getTime() - new Date(channel.joinDate).getTime()) / 86400000);
+        if (diff >= 0 && diff < 365) ageLine += ' (' + diff + ' дн. до видео)';
+      }
+      lines.push(ageLine);
+    }
+    if (channel.network_cluster_id) {
+      lines.push('🕸 Кластер: ' + channel.network_cluster_id);
+    }
+    if (channel.targets) {
+      var tops = Object.entries(channel.targets).map(function(kv){
+        var k = kv[0], v = kv[1] || {};
+        var score = (v.pro || 0) - (v.anti || 0);
+        return { k: k, score: score };
+      }).sort(function(a,b){ return Math.abs(b.score) - Math.abs(a.score); }).slice(0,3);
+      if (tops.length) lines.push('Цели: ' + tops.map(function(t){ return t.k + (t.score>0?' +':' ') + t.score; }).join(' · '));
+    }
+    container.title = lines.join('\n');
+    author.parentNode.insertBefore(container, author.nextSibling);
+    if (thread) {
+      thread.style.borderLeft = '3px solid ' + MB_COLORS[primary];
+      thread.style.paddingLeft = '8px';
+    }
+  } catch (e) { console.warn('[MetaBot] applyBadge failed:', e.message); }
+}
+
+async function refreshBadgesForChannel(channelId) {
+  try {
+    var channel = await mbdb.getChannel(channelId);
+    if (!channel) return;
+    var authors = document.querySelectorAll('#author-text');
+    for (var i = 0; i < authors.length; i++) {
+      var href = authors[i].href || '';
+      if (!href) continue;
+      var nid = await normalizeChannelId(href);
+      if (nid === channelId) {
+        var view = authors[i].closest('ytd-comment-view-model, ytd-comment-renderer, ytd-comment-thread-renderer');
+        if (view) applyBadge(view, channel);
+      }
+    }
+  } catch (e) { console.warn('[MetaBot] refreshBadges failed:', e.message); }
 }
 
 async function computePatterns(channelId) {
@@ -2050,6 +2242,7 @@ async function classifyBatch() {
         var c = parsed.classifications[j];
         await mbdb.applyClassification(c.channelId, c.label, c.confidence, c.reasoning);
         console.log('[MetaBot AI] classified', c.channelId, '->', c.label, '(' + Math.round(c.confidence * 100) + '%)');
+        refreshBadgesForChannel(c.channelId);
       }
     }
     GM_setValue('mb_total_input_tokens', (GM_getValue('mb_total_input_tokens', 0) + (response.usage ? (response.usage.prompt_tokens || 0) : 0)));
