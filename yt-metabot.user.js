@@ -2,15 +2,15 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230113
+// @version      230201
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
-// @updateURL    https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/yt-metabot.meta.js
-// @downloadURL  https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/yt-metabot.user.js
+// DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
+// auto-update kept overwriting our custom AI + T1-T6 fixes with v230106.
+// Re-enable only after forking the repo and pointing to your own raw.gh URL.
 // @icon         https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png
 // @match        *://*.youtube.com/*
 // @include      https://*youtube.com/*
-// @require      http://localhost:8888/trustedtypes-shim.js
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js
 // @require      https://raw.githubusercontent.com/sizzlemctwizzle/GM_config/master/gm_config.js
 // @connect      youtube.com
@@ -18,12 +18,15 @@
 // @connect      raw.githubusercontent.com
 // @connect      github.com
 // @connect      githubusercontent.com
+// @connect      api.deepseek.com
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM.xmlHttpRequest
 // @run-at       document-end
 // ==/UserScript==
+
+/* global GM_config, GM_getValue, GM_setValue, GM_xmlhttpRequest, GM_info, $, jQuery, indexedDB, IDBKeyRange, MutationObserver, XMLHttpRequest, trustedTypes */
 
 // Trusted Types policy shim — YouTube (and other Google sites) require all
 // innerHTML assignments to go through a TrustedHTML policy. jQuery 2.x and
@@ -130,6 +133,38 @@ GM_config.init( {
       'label': 'Custom color 5',
       'type': 'int',
       'default': '51328'
+    },
+    'deepseek_api_key': {
+      'label': 'DeepSeek API Key',
+      'type': 'text',
+      'default': ''
+    },
+    'mb_batch_interval_min': {
+      'label': 'Batch interval (min)',
+      'type': 'int',
+      'min': 5,
+      'max': 1440,
+      'default': 30
+    },
+    'mb_daily_batch_cap': {
+      'label': 'Daily batch cap',
+      'type': 'int',
+      'min': 1,
+      'max': 500,
+      'default': 50
+    },
+    'mb_auto_classify': {
+      'label': 'Auto-classify new channels',
+      'type': 'checkbox',
+      'default': false
+    },
+    'mb_total_input_tokens': {
+      'label': 'Total input tokens used',
+      'type': 'info'
+    },
+    'mb_total_output_tokens': {
+      'label': 'Total output tokens used',
+      'type': 'info'
     }
   },
 });
@@ -175,7 +210,167 @@ const iconc2 = '<span style="' + iconstyledef + '">' + iconsdef[2] + '</span> ';
 const iconc3 = '<span style="' + iconstyledef + '">' + iconsdef[3] + '</span> ';
 const iconc4 = '<span style="' + iconstyledef + '">' + iconsdef[4] + '</span> ';
 const iconc5 = '<span style="' + iconstyledef + '">' + iconsdef[5] + '</span> ';
-var txtlistpadd = '\u2003<span id="listpadd" style="cursor: pointer; ' + iconstyledef + '" title="Добавить в закладки">' + iconsdef[0] + '</span>';
+var txtlistpadd = '\u2003<span id="listpadd" style="cursor: pointer; ' + iconstyledef + '" title="\u0414\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u0432 \u0437\u0430\u043A\u043B\u0430\u0434\u043A\u0438">' + iconsdef[0] + '</span>';
+
+// ===== AI-augmented bot detection module =====
+var mbdb = {};
+
+mbdb.open = function() {
+  return new Promise(function(resolve, reject) {
+    var req = indexedDB.open('metabot_db', 1);
+    req.onupgradeneeded = function(e) {
+      var db = e.target.result;
+      if (!db.objectStoreNames.contains('channels')) {
+        db.createObjectStore('channels', {keyPath: 'channelId'});
+      }
+      if (!db.objectStoreNames.contains('comments')) {
+        var cs = db.createObjectStore('comments', {autoIncrement: true});
+        cs.createIndex('by_channel', 'channelId', {unique: false});
+      }
+      if (!db.objectStoreNames.contains('clf_queue')) {
+        db.createObjectStore('clf_queue', {keyPath: 'channelId'});
+      }
+    };
+    req.onsuccess = function(e) { resolve(e.target.result); };
+    req.onerror = function(e) { reject(e.target.error); };
+  });
+};
+
+mbdb.getDb = function() {
+  if (!mbdb._dbPromise) mbdb._dbPromise = mbdb.open();
+  return mbdb._dbPromise;
+};
+
+mbdb.upsertChannel = function(channelData) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('channels', 'readwrite');
+      var store = tx.objectStore('channels');
+      var getReq = store.get(channelData.channelId);
+      getReq.onsuccess = function() {
+        var existing = getReq.result || {};
+        var merged = Object.assign({}, existing, channelData, {lastSeen: Date.now()});
+        store.put(merged);
+      };
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.addComment = function(commentData) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('comments', 'readwrite');
+      var store = tx.objectStore('comments');
+      var idx = store.index('by_channel');
+      var countReq = idx.count(commentData.channelId);
+      countReq.onsuccess = function() {
+        if (countReq.result >= 50) {
+          var cursorReq = idx.openCursor(commentData.channelId);
+          cursorReq.onsuccess = function(e) {
+            var cursor = e.target.result;
+            if (cursor) {
+              store.delete(cursor.primaryKey);
+              store.add(commentData);
+            }
+          };
+        } else {
+          store.add(commentData);
+        }
+      };
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.getChannel = function(channelId) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('channels', 'readonly');
+      var req = tx.objectStore('channels').get(channelId);
+      req.onsuccess = function() { resolve(req.result); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.getComments = function(channelId, limit) {
+  limit = limit || 5;
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('comments', 'readonly');
+      var req = tx.objectStore('comments').index('by_channel').openCursor(IDBKeyRange.only(channelId), 'prev');
+      var results = [];
+      req.onsuccess = function(e) {
+        var cursor = e.target.result;
+        if (cursor && results.length < limit) {
+          results.push(cursor.value);
+          cursor.continue();
+        } else {
+          resolve(results);
+        }
+      };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.enqueueForClassification = function(channelId) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('clf_queue', 'readwrite');
+      var req = tx.objectStore('clf_queue').put({channelId: channelId, addedAt: Date.now(), attempts: 0});
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.dequeueBatch = function(n) {
+  n = n || 20;
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('clf_queue', 'readwrite');
+      var store = tx.objectStore('clf_queue');
+      var req = store.openCursor();
+      var batch = [];
+      req.onsuccess = function(e) {
+        var cursor = e.target.result;
+        if (cursor && batch.length < n) {
+          batch.push(cursor.value);
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        } else {
+          resolve(batch);
+        }
+      };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.applyClassification = function(channelId, label, confidence, reasoning) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('channels', 'readwrite');
+      var store = tx.objectStore('channels');
+      var getReq = store.get(channelId);
+      getReq.onsuccess = function() {
+        var data = getReq.result || {channelId: channelId};
+        data.label = label;
+        data.confidence = confidence;
+        data.reasoning = reasoning;
+        data.classifiedAt = Date.now();
+        data.lastSeen = Date.now();
+        store.put(data);
+      };
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
 
 console.log("[MetaBot for Youtube] Starting at URL: " + window.location);
 if (window.location.pathname == '/live_chat_replay' || window.location.pathname == '/live_chat') {
@@ -538,7 +733,7 @@ function insertannNew(jNode) {
   ytoinfosspan.style = 'font-size:1.4rem;max-width:640px;margin:-10px auto 1em auto;display:none';
   $(jNode).find('div#title').after(ytoinfosspan);
   var settingsspan = document.createElement('span');
-  settingsspan.innerHTML = '<span style="float:left;width:100px"><img src="https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png" width="100px" height="100px" /></span><span style="float:right;margin: 0 0 0 10px;width:525px"><span style="font-weight:500">' + GM_info.script.name + ' v' + GM_info.script.version + '</span>\u2003<span id="urlgithub" style="cursor:pointer" data-url="https://github.com/asrdri/yt-metabot-user-js/">GitHub</span>\u2003<span id="urlissues" style="cursor:pointer" data-url="https://github.com/asrdri/yt-metabot-user-js/issues">Предложения и баги</span>\u2003<span id="urllists" style="cursor:pointer" data-url="https://github.com/asrdri/yt-metabot-user-js/issues/23">Списки</span><span class="badge badge-style-type-simple ytd-badge-supported-renderer" style="margin:4px 0 4px 0;text-align:center">Настройки</span>Комментарии от известных ботов из ЕРКЮ <select id="mbcddm1"><option value="1">помечать</option><option value="2">скрывать</option></select><span id="mbcswg1"><br style="line-height:2em"><label title="Пункт 5.1.H Условий использования YouTube не нарушается - запросы отправляются со значительным интервалом"><input type="checkbox" id="mbcbox1">Автоматически ставить <span style="font-family: Segoe UI Symbol">\uD83D\uDC4E</span> комментариям от ботов из ЕРКЮ</label></span><br style="line-height:2em"><label title="Актуально для русского интерфейса и небольшой ширины окна браузера"><input type="checkbox" id="mbcbox2">Скрывать длинные подписи кнопок Мне (не) понравилось / Поделиться</label><br style="line-height:2em"><label><input type="checkbox" id="mbcbox3">Дополнительные списки</label><span id="mbcswg2"><br style="line-height:2em">' + iconp1 + ' Закладки: <input type="color" id="colorpersonal" style="height: 1.8rem; width: 40px"><br style="line-height:1.8em"><textarea id="listpersonal" rows="3" style="width: 500px"></textarea><br style="line-height:1.2em">Сторонние списки:<br>' + iconc1 + descc1 + '<input type="text" id="listcustom1" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom1" style="height: 1.8rem; width: 40px"><br>' + iconc2 + descc2 + '<input type="text" id="listcustom2" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom2" style="height: 1.8rem; width: 40px"><br>' + iconc3 + descc3 + '<input type="text" id="listcustom3" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom3" style="height: 1.8rem; width: 40px"><br>' + iconc4 + descc4 + '<input type="text" id="listcustom4" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom4" style="height: 1.8rem; width: 40px"><br>' + iconc5 + descc5 + '<input type="text" id="listcustom5" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom5" style="height: 1.8rem; width: 40px"></span><br style="line-height:2em">Классический дизайн YouTube:' + Aparse("\u2003[Chrome](https://chrome.google.com/webstore/detail/youtube-redux/mdgdgieddpndgjlmeblhjgljejejkikf)\u2003[Firefox](https://addons.mozilla.org/firefox/addon/youtube-redux/)") + '<br><span id="resetbtn" style="cursor:pointer">Сбросить настройки</span><span id="configsaved" class="badge badge-style-type-simple ytd-badge-supported-renderer" style="margin:4px 0 4px 0;text-align:center;display:none;-webkit-transition: background-color 0.3s ease-in-out;-moz-transition: background-color 0.3s ease-in-out;-ms-transition: background-color 0.3s ease-in-out;-o-transition: background-color 0.3s ease-in-out;transition: background-color 0.3s ease-in-out;">Настройки сохранены. Для вступления в силу необходимо <span style="cursor:pointer;text-decoration:underline" onclick="javascript:window.location.reload();"><span style="font-family: Segoe UI Symbol">\uD83D\uDD03</span>обновить страницу</span>.</span></span>';
+  settingsspan.innerHTML = '<span style="float:left;width:100px"><img src="https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png" width="100px" height="100px" /></span><span style="float:right;margin: 0 0 0 10px;width:525px"><span style="font-weight:500">' + GM_info.script.name + ' v' + GM_info.script.version + '</span>\u2003<span id="urlgithub" style="cursor:pointer" data-url="https://github.com/asrdri/yt-metabot-user-js/">GitHub</span>\u2003<span id="urlissues" style="cursor:pointer" data-url="https://github.com/asrdri/yt-metabot-user-js/issues">Предложения и баги</span>\u2003<span id="urllists" style="cursor:pointer" data-url="https://github.com/asrdri/yt-metabot-user-js/issues/23">Списки</span><span class="badge badge-style-type-simple ytd-badge-supported-renderer" style="margin:4px 0 4px 0;text-align:center">Настройки</span>Комментарии от известных ботов из ЕРКЮ <select id="mbcddm1"><option value="1">помечать</option><option value="2">скрывать</option></select><span id="mbcswg1"><br style="line-height:2em"><label title="Пункт 5.1.H Условий использования YouTube не нарушается - запросы отправляются со значительным интервалом"><input type="checkbox" id="mbcbox1">Автоматически ставить <span style="font-family: Segoe UI Symbol">\uD83D\uDC4E</span> комментариям от ботов из ЕРКЮ</label></span><br style="line-height:2em"><label title="Актуально для русского интерфейса и небольшой ширины окна браузера"><input type="checkbox" id="mbcbox2">Скрывать длинные подписи кнопок Мне (не) понравилось / Поделиться</label><br style="line-height:2em"><label><input type="checkbox" id="mbcbox3">Дополнительные списки</label><span id="mbcswg2"><br style="line-height:2em">' + iconp1 + ' Закладки: <input type="color" id="colorpersonal" style="height: 1.8rem; width: 40px"><br style="line-height:1.8em"><textarea id="listpersonal" rows="3" style="width: 500px"></textarea><br style="line-height:1.2em">Сторонние списки:<br>' + iconc1 + descc1 + '<input type="text" id="listcustom1" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom1" style="height: 1.8rem; width: 40px"><br>' + iconc2 + descc2 + '<input type="text" id="listcustom2" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom2" style="height: 1.8rem; width: 40px"><br>' + iconc3 + descc3 + '<input type="text" id="listcustom3" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom3" style="height: 1.8rem; width: 40px"><br>' + iconc4 + descc4 + '<input type="text" id="listcustom4" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom4" style="height: 1.8rem; width: 40px"><br>' + iconc5 + descc5 + '<input type="text" id="listcustom5" style="height: 1.7rem; width: 440px"> <input type="color" id="colorcustom5" style="height: 1.8rem; width: 40px"></span><br style="line-height:2em">Классический дизайн YouTube:' + Aparse("\u2003[Chrome](https://chrome.google.com/webstore/detail/youtube-redux/mdgdgieddpndgjlmeblhjgljejejkikf)\u2003[Firefox](https://addons.mozilla.org/firefox/addon/youtube-redux/)") + '<br><span id="resetbtn" style="cursor:pointer">Сбросить настройки</span><span id="configsaved" class="badge badge-style-type-simple ytd-badge-supported-renderer" style="margin:4px 0 4px 0;text-align:center;display:none;-webkit-transition: background-color 0.3s ease-in-out;-moz-transition: background-color 0.3s ease-in-out;-ms-transition: background-color 0.3s ease-in-out;-o-transition: background-color 0.3s ease-in-out;transition: background-color 0.3s ease-in-out;">Настройки сохранены. Для вступления в силу необходимо <span style="cursor:pointer;text-decoration:underline" onclick="javascript:window.location.reload();"><span style="font-family: Segoe UI Symbol">\uD83D\uDD03</span>обновить страницу</span>.</span><br style="line-height:2em"><button id="mbClassifyBtn" style="padding:6px 16px;background:#333;color:#fff;border:1px solid #555;border-radius:4px;cursor:pointer">\uD83E\uDD16 AI Classify now</button><br style="line-height:1.5em"><label style="font-size:13px">API Key: <input type="password" id="deepseek_api_key" style="width:280px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:3px 6px" placeholder="sk-..."></label></span>';
   settingsspan.id = 'config';
   settingsspan.classList.add("description");
   settingsspan.classList.add("content");
@@ -597,6 +792,7 @@ function insertannNew(jNode) {
   $(jNode).find("input#listcustom3").val(GM_config.get('listc3'));
   $(jNode).find("input#listcustom4").val(GM_config.get('listc4'));
   $(jNode).find("input#listcustom5").val(GM_config.get('listc5'));
+  $(jNode).find("input#deepseek_api_key").val(GM_config.get('deepseek_api_key'));
   $(jNode).find("input#colorpersonal").val(parseColor(GM_config.get('colorp1'), false));
   $(jNode).find("input#colorcustom1").val(parseColor(GM_config.get('colorc1'), false));
   $(jNode).find("input#colorcustom2").val(parseColor(GM_config.get('colorc2'), false));
@@ -609,7 +805,7 @@ function insertannNew(jNode) {
   if ($(jNode).find("input#mbcbox3").prop('checked') == false) {
     $(jNode).find("span#mbcswg2").hide();
   }
-  $(jNode).find("input#mbcbox1, input#mbcbox2, input#mbcbox3, select#mbcddm1, textarea#listpersonal, input#listcustom1, input#listcustom2, input#listcustom3, input#listcustom4, input#listcustom5, input#colorpersonal, input#colorcustom1, input#colorcustom2, input#colorcustom3, input#colorcustom4, input#colorcustom5").change(function() {
+  $(jNode).find("input#mbcbox1, input#mbcbox2, input#mbcbox3, select#mbcddm1, textarea#listpersonal, input#listcustom1, input#listcustom2, input#listcustom3, input#listcustom4, input#listcustom5, input#deepseek_api_key, input#colorpersonal, input#colorcustom1, input#colorcustom2, input#colorcustom3, input#colorcustom4, input#colorcustom5").change(function() {
     if ($(jNode).find("select#mbcddm1").val() == 2) {
       $(jNode).find("span#mbcswg1").hide();
     } else {
@@ -621,6 +817,12 @@ function insertannNew(jNode) {
       $(jNode).find("span#mbcswg2").show();
     }
     saveconfigNew(jNode);
+  });
+  $(jNode).find('button#mbClassifyBtn').on('click', function() {
+    $(this).text('Classifying...').prop('disabled', true);
+    classifyBatch().then(function() {
+      $(jNode).find('button#mbClassifyBtn').text('\uD83E\uDD16 AI Classify now').prop('disabled', false);
+    });
   });
 }
 
@@ -635,6 +837,7 @@ function saveconfigNew(jNode) {
   GM_config.set('listc3', $(jNode).find("input#listcustom3").val());
   GM_config.set('listc4', $(jNode).find("input#listcustom4").val());
   GM_config.set('listc5', $(jNode).find("input#listcustom5").val());
+  GM_config.set('deepseek_api_key', $(jNode).find("input#deepseek_api_key").val());
   GM_config.set('colorp1', parseColor($(jNode).find("input#colorpersonal").val(), true));
   GM_config.set('colorc1', parseColor($(jNode).find("input#colorcustom1").val(), true));
   GM_config.set('colorc2', parseColor($(jNode).find("input#colorcustom2").val(), true));
@@ -691,6 +894,26 @@ async function parseitemNew(jNode) {
     $(pNode).find("#t30sp").hide();
   });
   var userID = await normalizeChannelId($(jNode).find("a")[0].href) || $(jNode).find("a")[0].href.split('/').pop();
+  // AI collector hook — async, not blocking main flow
+  (async function(userID, jNode) {
+    try {
+      var videoId = (location.search.match(/[?&]v=([^&]+)/) || [])[1];
+      var commentText = $(jNode).find('#content-text, yt-attributed-string').first().text().slice(0, 1000);
+      await mbdb.addComment({
+        channelId: userID,
+        videoId: videoId,
+        text: commentText,
+        timestamp: Date.now(),
+        isReply: !!jNode.closest('ytd-comment-replies-renderer, ytd-comment-replies-renderer')
+      });
+      var channel = await mbdb.getChannel(userID);
+      if (!channel || !channel.label) {
+        await mbdb.enqueueForClassification(userID);
+      } else {
+        applyBadge(jNode, channel);
+      }
+    } catch (e) { console.warn('[MetaBot AI] collector failed:', e.message); }
+  })(userID, jNode);
   var foundID = arrayERKY.indexOf(userID);
   var foundIDp1 = -1;
   var foundIDc1 = -1;
@@ -909,8 +1132,9 @@ async function checkdateNew(jNode) {
   }
 }
 
-function procdateNew(jNode, response, url) {
+async function procdateNew(jNode, response, url) {
   try {
+    var testday;
     // try new YouTube format first (2022+): joinedDateText":{"content":"..."}
     var matches = regexdate.exec(response);
     if (!matches) {
@@ -921,10 +1145,10 @@ function procdateNew(jNode, response, url) {
         return;
       }
       // old format: date is in group 3
-      var testday = Dparse(matches[3]);
+      testday = Dparse(matches[3]);
     } else {
       // new format: date is in group 1
-      var testday = Dparse(matches[1]);
+      testday = Dparse(matches[1]);
     }
     var aNode = $(jNode).find("#author-text")[0];
     var cNode = $(jNode).parent().find("#content-text")[0];
@@ -945,8 +1169,83 @@ function procdateNew(jNode, response, url) {
     aNode = $(jNode).find("#checksp");
     aNode.attr('data-chan', $(jNode).find("a#author-text")[0].href);
     aNode.hide();
+    // AI: scrape subscriber count and video count from /about page
+    try {
+      var subMatch = response.match(/"subscriberCountText":\{"simpleText":"([^"]+)"/);
+      var vidMatch = response.match(/"videoCount":"(\d+)"/);
+      var channelId = $(jNode).find("a")[0].href.split('/').pop();
+      if (channelId.startsWith('@')) {
+        var resolved = await normalizeChannelId($(jNode).find("a")[0].href);
+        if (resolved) channelId = resolved;
+      }
+      var channelData = {channelId: channelId, joinDate: testday, lastSeen: Date.now()};
+      if (subMatch) channelData.subscriberCount = subMatch[1];
+      if (vidMatch) channelData.videoCount = parseInt(vidMatch[1], 10);
+      await mbdb.upsertChannel(channelData);
+    } catch (aiErr) {
+      console.warn('[MetaBot AI] channel meta scrape failed:', aiErr.message);
+    }
   } catch (err) {
     console.warn('[MetaBot] joinedDate parse failed for', url, ':', err.message);
+  }
+}
+
+function applyBadge(jNode, channel) {
+  if (!channel || !channel.label || channel.label === 'UNKNOWN') return;
+  var colors = {BOT: '#ff5050', SUSPECT: '#ffaa00', HUMAN: '#50c050', UNKNOWN: '#888'};
+  var author = jNode.querySelector('#author-text, #header-author');
+  if (!author) return;
+  if (author.querySelector('.mb-ai-badge')) return;
+  var badge = document.createElement('span');
+  badge.className = 'mb-ai-badge';
+  badge.style.cssText = 'color: ' + (colors[channel.label] || '#888') + '; margin-left: 6px; font-weight: bold; cursor: help; font-size: 12px;';
+  badge.textContent = '[' + channel.label + ']';
+  badge.title = 'Confidence: ' + Math.round(channel.confidence * 100) + '%\nReason: ' + channel.reasoning;
+  author.appendChild(badge);
+}
+
+async function computePatterns(channelId) {
+  try {
+    var channel = await mbdb.getChannel(channelId);
+    var comments = await mbdb.getComments(channelId, 50);
+    if (!channel || comments.length === 0) return {commentCount: 0};
+    var joinAgeDays = channel.joinDate ? Math.floor((Date.now() - new Date(channel.joinDate).getTime()) / 86400000) : null;
+    var commentCount = comments.length;
+    var firstTs = comments[comments.length - 1].timestamp;
+    var weeksSinceFirst = firstTs ? Math.max(1, (Date.now() - firstTs) / 604800000) : 1;
+    var avgCommentsPerWeek = commentCount / weeksSinceFirst;
+    // Peak hour MSK (UTC+3)
+    var hours = comments.map(function(c) { return new Date(c.timestamp).getUTCHours(); });
+    var hourCounts = {};
+    hours.forEach(function(h) { hourCounts[(h + 3) % 24] = (hourCounts[(h + 3) % 24] || 0) + 1; });
+    var peakHourMSK = parseInt(Object.keys(hourCounts).sort(function(a,b) { return hourCounts[b] - hourCounts[a]; })[0], 10) || 0;
+    // Peak weekday
+    var weekdays = comments.map(function(c) { return new Date(c.timestamp).getUTCDay(); });
+    var wdCounts = {};
+    weekdays.forEach(function(d) { wdCounts[d] = (wdCounts[d] || 0) + 1; });
+    var peakWeekday = parseInt(Object.keys(wdCounts).sort(function(a,b) { return wdCounts[b] - wdCounts[a]; })[0], 10) || 0;
+    // Weekday vs weekend ratio
+    var weekdayCount = weekdays.filter(function(d) { return d >= 1 && d <= 5; }).length;
+    var weekendCount = weekdays.filter(function(d) { return d === 0 || d === 6; }).length;
+    var weekdayVsWeekendRatio = weekendCount > 0 ? weekdayCount / weekendCount : weekdayCount;
+    // Avg comment length
+    var avgCommentLength = comments.reduce(function(sum, c) { return sum + (c.text || '').length; }, 0) / commentCount;
+    // Channel diversity
+    var uniqueVideos = new Set(comments.map(function(c) { return c.videoId; }));
+    var channelDiversity = uniqueVideos.size;
+    return {
+      joinAgeDays: joinAgeDays,
+      commentCount: commentCount,
+      avgCommentsPerWeek: Math.round(avgCommentsPerWeek * 10) / 10,
+      peakHourMSK: peakHourMSK,
+      peakWeekday: peakWeekday,
+      weekdayVsWeekendRatio: Math.round(weekdayVsWeekendRatio * 10) / 10,
+      avgCommentLength: Math.round(avgCommentLength),
+      channelDiversity: channelDiversity
+    };
+  } catch (e) {
+    console.warn('[MetaBot AI] computePatterns failed:', e.message);
+    return {commentCount: 0};
   }
 }
 
@@ -1164,6 +1463,87 @@ function parseColor(color, toNumber) {
   } else {
     color = '#' + ('00000' + (color | 0).toString(16)).substr(-6);
     return color;
+  }
+}
+
+// ===== AI-augmented bot detection — DeepSeek connector =====
+async function callDeepSeek(messages) {
+  var apiKey = GM_getValue('deepseek_api_key');
+  if (!apiKey) throw new Error('[MetaBot AI] No DeepSeek API key set in settings');
+  return new Promise(function(resolve, reject) {
+    GM_xmlhttpRequest({
+      method: 'POST',
+      url: 'https://api.deepseek.com/v1/chat/completions',
+      headers: {
+        'Authorization': 'Bearer ' + apiKey,
+        'Content-Type': 'application/json'
+      },
+      data: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: messages,
+        response_format: {type: 'json_object'},
+        temperature: 0.2,
+        max_tokens: 2000
+      }),
+      onload: function(r) {
+        if (r.status !== 200) return reject(new Error('[MetaBot AI] HTTP ' + r.status + ': ' + r.responseText.slice(0, 200)));
+        try { resolve(JSON.parse(r.responseText)); }
+        catch (e) { reject(e); }
+      },
+      onerror: reject,
+      timeout: 30000
+    });
+  });
+}
+
+var MB_SYSTEM_PROMPT = 'You are a YouTube comment behavior analyst. Classify YouTube channels as BOT, SUSPECT, or HUMAN based on their comment patterns and account metadata. Respond with JSON: {"classifications": [{"channelId": "...", "label": "BOT|SUSPECT|HUMAN", "confidence": 0.0-1.0, "reasoning": "..."}]}. Consider: very new accounts with high activity = suspicious; repetitive short comments = bot; diverse comments across many videos = human; peak posting at 3-7AM MSK = bot pattern.';
+
+function buildPromptMessages(channels) {
+  return [
+    {role: 'system', content: MB_SYSTEM_PROMPT},
+    {role: 'user', content: 'Channels:\n' + JSON.stringify(channels, null, 2)}
+  ];
+}
+
+async function classifyBatch() {
+  try {
+    var db = await mbdb.getDb();
+    var queue = await mbdb.dequeueBatch(20);
+    if (queue.length === 0) {
+      console.log('[MetaBot AI] classifyBatch: queue empty');
+      return;
+    }
+    console.log('[MetaBot AI] classifyBatch: processing', queue.length, 'channels');
+    var channelData = [];
+    for (var i = 0; i < queue.length; i++) {
+      var item = queue[i];
+      var channel = await mbdb.getChannel(item.channelId);
+      var patterns = await computePatterns(item.channelId);
+      var comments = await mbdb.getComments(item.channelId, 5);
+      channelData.push({
+        channelId: item.channelId,
+        joinDate: channel ? channel.joinDate : null,
+        subscriberCount: channel ? channel.subscriberCount : null,
+        videoCount: channel ? channel.videoCount : null,
+        sampleComments: comments.map(function(c) { return c.text; }),
+        patterns: patterns
+      });
+    }
+    var messages = buildPromptMessages(channelData);
+    var response = await callDeepSeek(messages);
+    var parsed = JSON.parse(response.choices[0].message.content);
+    if (parsed.classifications && Array.isArray(parsed.classifications)) {
+      for (var j = 0; j < parsed.classifications.length; j++) {
+        var c = parsed.classifications[j];
+        await mbdb.applyClassification(c.channelId, c.label, c.confidence, c.reasoning);
+        console.log('[MetaBot AI] classified', c.channelId, '->', c.label, '(' + Math.round(c.confidence * 100) + '%)');
+      }
+    }
+    GM_setValue('mb_total_input_tokens', (GM_getValue('mb_total_input_tokens', 0) + (response.usage ? (response.usage.prompt_tokens || 0) : 0)));
+    GM_setValue('mb_total_output_tokens', (GM_getValue('mb_total_output_tokens', 0) + (response.usage ? (response.usage.completion_tokens || 0) : 0)));
+    console.log('[MetaBot AI] classifyBatch done, tokens:', GM_getValue('mb_total_input_tokens', 0), 'in /', GM_getValue('mb_total_output_tokens', 0), 'out');
+  } catch (e) {
+    console.warn('[MetaBot AI] classifyBatch failed:', e.message);
   }
 }
 
