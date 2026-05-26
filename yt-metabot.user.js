@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230402
+// @version      230403
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -659,11 +659,26 @@ async function ensureTrackButton() {
       }
     }
     if (!ownerEl) {
-      // Last resort: meta itemprop
+      // Fallback 1: meta[itemprop=channelId]
       var meta = document.querySelector('meta[itemprop="channelId"]');
       if (meta && meta.content) {
         ownerEl = { href: 'https://www.youtube.com/channel/' + meta.content, textContent: document.querySelector('meta[itemprop="name"]')?.content || '' };
       }
+    }
+    if (!ownerEl) {
+      // Fallback 2: parse ytInitialData / ytInitialPlayerResponse — needed for Дождь and similar
+      // channels that render owner-link as javascript:void(0) overlay tooltip.
+      try {
+        var html = document.documentElement.outerHTML;
+        var m = html.match(/"externalChannelId":"(UC[A-Za-z0-9_-]+)"/);
+        var nameM = html.match(/"ownerChannelName":"([^"]+)"/);
+        if (m && m[1]) {
+          ownerEl = {
+            href: 'https://www.youtube.com/channel/' + m[1],
+            textContent: nameM ? nameM[1] : m[1]
+          };
+        }
+      } catch (e) {}
     }
     if (!ownerEl) return;
     var ownerId = await normalizeChannelId(ownerEl.href);
