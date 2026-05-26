@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230202
+// @version      230203
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -11,6 +11,7 @@
 // @icon         https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png
 // @match        *://*.youtube.com/*
 // @include      https://*youtube.com/*
+// @require      http://localhost:8888/trustedtypes-shim.js
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js
 // @require      https://raw.githubusercontent.com/sizzlemctwizzle/GM_config/master/gm_config.js
 // @connect      youtube.com
