@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230201
+// @version      230202
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -894,17 +894,41 @@ async function parseitemNew(jNode) {
     $(pNode).find("#t30sp").hide();
   });
   var userID = await normalizeChannelId($(jNode).find("a")[0].href) || $(jNode).find("a")[0].href.split('/').pop();
-  // AI collector hook — async, not blocking main flow
+  // AI collector hook — async, not blocking main flow.
+  // Wait briefly for YouTube to hydrate comment text into the DOM —
+  // parseitemNew can fire before #content-text is populated, which was leaving
+  // text:"" in IDB and making AI classification useless.
   (async function(userID, jNode) {
     try {
+      await new Promise(function(r){ setTimeout(r, 700); });
       var videoId = (location.search.match(/[?&]v=([^&]+)/) || [])[1];
-      var commentText = $(jNode).find('#content-text, yt-attributed-string').first().text().slice(0, 1000);
+      function extractText(node) {
+        var sels = [
+          'ytd-comment-view-model #content-text',
+          '#content-text',
+          'yt-attributed-string',
+          '#content',
+          '.yt-core-attributed-string'
+        ];
+        for (var i = 0; i < sels.length; i++) {
+          var el = $(node).find(sels[i]).first();
+          var t = el.text ? el.text().trim() : '';
+          if (t && t.length > 0) return t;
+        }
+        return '';
+      }
+      var commentText = extractText(jNode).slice(0, 1000);
+      // One retry if still empty (slow hydration)
+      if (!commentText) {
+        await new Promise(function(r){ setTimeout(r, 1200); });
+        commentText = extractText(jNode).slice(0, 1000);
+      }
       await mbdb.addComment({
         channelId: userID,
         videoId: videoId,
         text: commentText,
         timestamp: Date.now(),
-        isReply: !!jNode.closest('ytd-comment-replies-renderer, ytd-comment-replies-renderer')
+        isReply: !!jNode.closest('ytd-comment-replies-renderer')
       });
       var channel = await mbdb.getChannel(userID);
       if (!channel || !channel.label) {
