@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230401
+// @version      230402
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -642,25 +642,40 @@ async function ensureTrackButton() {
   if (window._mbCreatingTrackBtn) return;
   window._mbCreatingTrackBtn = true;
   try {
-    // Clean up any existing copies (incl. stale ones from previous SPA video)
-    var existing = document.querySelectorAll('[id^="mbTrackOwnerBtn"]');
-    existing.forEach(function(e){ e.remove(); });
-    // Wider selector pool — different channels (DW, Navalny, Дождь, etc.) use
-    // slightly different DOM. Try owner-renderer first, fall back to #upper-row.
-    var ownerEl = document.querySelector(
-      'ytd-video-owner-renderer #channel-name a,' +
-      'ytd-video-owner-renderer ytd-channel-name a,' +
-      '#owner #channel-name a,' +
-      '#upper-row #channel-name a,' +
-      '#meta #channel-name a,' +
-      'ytd-watch-metadata #owner a,' +
-      'ytd-video-owner-renderer a.yt-simple-endpoint'
+    // Find first link in owner area that actually points to a channel (not javascript:void(0) overlay).
+    // Дождь and similar channels render a tooltip-link as the first <a> with javascript:void(0).
+    var ownerContainer = document.querySelector(
+      'ytd-video-owner-renderer, #owner, #upper-row, #meta, ytd-watch-metadata #owner, #above-the-fold'
     );
+    var ownerEl = null;
+    if (ownerContainer) {
+      var anchors = ownerContainer.querySelectorAll('a[href]');
+      for (var ai = 0; ai < anchors.length; ai++) {
+        var h = anchors[ai].getAttribute('href') || '';
+        if (h && /^(\/channel\/UC|\/@|https?:\/\/(www\.)?youtube\.com\/(channel\/UC|@))/.test(h)) {
+          ownerEl = anchors[ai];
+          break;
+        }
+      }
+    }
+    if (!ownerEl) {
+      // Last resort: meta itemprop
+      var meta = document.querySelector('meta[itemprop="channelId"]');
+      if (meta && meta.content) {
+        ownerEl = { href: 'https://www.youtube.com/channel/' + meta.content, textContent: document.querySelector('meta[itemprop="name"]')?.content || '' };
+      }
+    }
     if (!ownerEl) return;
     var ownerId = await normalizeChannelId(ownerEl.href);
     if (!ownerId) return;
-    // After async wait — re-check, maybe another invocation already added it
-    if (document.querySelector('#mbTrackOwnerBtn-' + ownerId.replace(/[^A-Za-z0-9_-]/g,'_'))) return;
+    var safeId = 'mbTrackOwnerBtn-' + ownerId.replace(/[^A-Za-z0-9_-]/g,'_');
+    // If button for THIS owner already exists in DOM AND is attached to a live node — do nothing (no flicker).
+    var current = document.getElementById(safeId);
+    if (current && current.isConnected) return;
+    // Remove ANY buttons for OTHER channels (stale from previous video).
+    document.querySelectorAll('[id^="mbTrackOwnerBtn-"]').forEach(function(e){
+      if (e.id !== safeId) e.remove();
+    });
     var tracked = await mbdb.isTracked(ownerId);
     var btn = document.createElement('button');
     btn.id = 'mbTrackOwnerBtn-' + ownerId.replace(/[^A-Za-z0-9_-]/g,'_');
@@ -685,7 +700,10 @@ async function ensureTrackButton() {
         if (typeof renderTracked === 'function') renderTracked();
       } catch (e) { console.warn('[MetaBot] track toggle failed:', e.message); }
     };
-    var parent = ownerEl.closest('#channel-name, ytd-channel-name') || ownerEl.parentNode;
+    // ownerEl may be a synthetic object (meta fallback) — attach to ytd-video-owner-renderer
+    var parent = null;
+    if (ownerEl.closest) parent = ownerEl.closest('#channel-name, ytd-channel-name, #owner, ytd-video-owner-renderer');
+    if (!parent) parent = (ownerEl.parentNode) || document.querySelector('ytd-video-owner-renderer #upper-row, ytd-video-owner-renderer, #owner');
     if (parent) parent.appendChild(btn);
   } catch (e) { console.warn('[MetaBot] ensureTrackButton failed:', e.message); }
   finally { window._mbCreatingTrackBtn = false; }
@@ -764,7 +782,7 @@ async function clusterNetworks() {
   try {
     var channels = await mbdb.getAllChannels();
     var candidates = channels.filter(function(c) { return c.network_signals && c.label !== 'HUMAN'; });
-    if (candidates.length < 3) { showToast('\u041D\u0435\u0434\u043E\u0441\u0442\u0430\u0442\u043E\u0447\u043D\u043E \u0434\u0430\u043D\u043D\u044B\u0445 \u0434\u043B\u044F \u043A\u043B\u0430\u0441\u0442\u0435\u0440\u0438\u0437\u0430\u0446\u0438\u0438 (\u043D\u0443\u0436\u043D\u043E \u22653 \u043A\u0430\u043D\u0430\u043B\u0430)'); return; }
+    if (candidates.length < 3) { showToast('Нужно ≥3 каналов с network_signals (BOT/SUSPECT, прошедших \ud83d\udd0d Анализ паттернов)'); return; }
     var signalKeys = ['pro_kremlin_score', 'anti_opposition_score', 'pro_opposition_score', 'anti_kremlin_score', 'whataboutism_score', 'personal_attack_score', 'repetition_score'];
     var vectors = candidates.map(function(c) {
       return {channelId: c.channelId, vec: signalKeys.map(function(k) { return c.network_signals[k] || 0; })};
@@ -1235,6 +1253,10 @@ function insertannNew(jNode) {
   $(jNode).find("span#cfgbtn")[0].addEventListener("click", function() {
     $(jNode).find("span#config").toggle();
     $(jNode).find("span#ytoinfo").hide();
+    // Refresh stats and lists when panel opens
+    try { if (typeof refreshStats === 'function') refreshStats(); } catch (e) {}
+    try { if (typeof renderTracked === 'function') renderTracked(); } catch (e) {}
+    try { if (typeof renderNetworks === 'function') renderNetworks(); } catch (e) {}
   }, false);
   $(jNode).find("span#annbtn")[0].addEventListener("click", function() {
     $(jNode).find("span#ytoinfo").toggle();
