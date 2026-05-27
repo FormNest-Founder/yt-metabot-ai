@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230403
+// @version      230404
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -653,6 +653,13 @@ async function ensureTrackButton() {
       for (var ai = 0; ai < anchors.length; ai++) {
         var h = anchors[ai].getAttribute('href') || '';
         if (h && /^(\/channel\/UC|\/@|https?:\/\/(www\.)?youtube\.com\/(channel\/UC|@))/.test(h)) {
+          // Exclude anchors that live inside description/infocards sub-renderers
+          // (e.g. Дождь: ytd-video-description-infocards-section-renderer has a channel link
+          //  but its parent is display:none — it belongs to the expanded description, not owner row)
+          var inDescription = anchors[ai].closest(
+            'ytd-video-description-infocards-section-renderer, ytd-structured-description-content-renderer, #description, #description-inner'
+          );
+          if (inDescription) continue;
           ownerEl = anchors[ai];
           break;
         }
@@ -715,10 +722,24 @@ async function ensureTrackButton() {
         if (typeof renderTracked === 'function') renderTracked();
       } catch (e) { console.warn('[MetaBot] track toggle failed:', e.message); }
     };
-    // ownerEl may be a synthetic object (meta fallback) — attach to ytd-video-owner-renderer
+    // ownerEl may be a synthetic object (meta fallback) — attach to a VISIBLE container near the owner row.
+    // Strategy: walk up from ownerEl to find a container that is actually rendered (offsetParent !== null
+    // means it has a rendered ancestor). If closest() yields a hidden container, fall back to the
+    // known-visible candidates in priority order.
     var parent = null;
     if (ownerEl.closest) parent = ownerEl.closest('#channel-name, ytd-channel-name, #owner, ytd-video-owner-renderer');
-    if (!parent) parent = (ownerEl.parentNode) || document.querySelector('ytd-video-owner-renderer #upper-row, ytd-video-owner-renderer, #owner');
+    // Verify the candidate is visible; if not, discard and use known-visible fallbacks
+    if (parent && parent.offsetParent === null && parent !== document.body) parent = null;
+    if (!parent) {
+      // Priority: upload-info row (always visible), then full owner row, then #owner wrapper
+      parent = document.querySelector(
+        'ytd-video-owner-renderer #upload-info, ytd-video-owner-renderer, #owner'
+      );
+      // Final visibility check — walk candidates until we find a rendered one
+      if (parent && parent.offsetParent === null && parent !== document.body) {
+        parent = document.querySelector('ytd-video-owner-renderer') || document.querySelector('#owner');
+      }
+    }
     if (parent) parent.appendChild(btn);
   } catch (e) { console.warn('[MetaBot] ensureTrackButton failed:', e.message); }
   finally { window._mbCreatingTrackBtn = false; }
