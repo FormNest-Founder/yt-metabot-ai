@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230406
+// @version      230407
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -1605,10 +1605,12 @@ async function parseitemNew(jNode) {
         isReply: !!jNode.closest('ytd-comment-replies-renderer')
       });
       var channel = await mbdb.getChannel(userID);
+      // ALWAYS apply badge — even for unknown channels show UNKNOWN/NEW_REG.
+      // Previously only known channels got badges → lazy-loaded comments stayed untagged.
+      var channelData = channel || { channelId: userID, label: null };
+      applyBadge(jNode, channelData);
       if (!channel || !channel.label) {
         await mbdb.enqueueForClassification(userID);
-      } else {
-        applyBadge(jNode, channel);
       }
     } catch (e) { console.warn('[MetaBot AI] collector failed:', e.message); }
   })(userID, jNode);
@@ -1983,6 +1985,73 @@ function applyBadge(jNode, channel) {
       if (tops.length) lines.push('Цели: ' + tops.map(function(t){ return t.k + (t.score>0?' +':' ') + t.score; }).join(' · '));
     }
     container.title = lines.join('\n');
+
+    // ⓘ info badge — custom popover with human-readable classification reasoning
+    (function(capturedChannel, capturedStates, capturedPrimary) {
+      var info = document.createElement('span');
+      info.textContent = 'ⓘ';
+      info.style.cssText = 'margin-left:4px;color:#888;cursor:help;font-size:11px;font-weight:normal';
+      info.setAttribute('data-mb-info', '1');
+
+      function buildExplanation(state, ch) {
+        var parts = [];
+        if (state === 'BOT') {
+          if (ch.reasoning) parts.push('AI: ' + ch.reasoning);
+          if (ch.confidence) parts.push('Уверенность: ' + Math.round(ch.confidence*100) + '%');
+          if (typeof arrayERKY !== 'undefined' && arrayERKY.indexOf(ch.channelId) >= 0) parts.push('В базе ЕРКЮ');
+        } else if (state === 'NETWORK') {
+          parts.push('Канал в кластере "' + (ch.network_cluster_id || 'unknown') + '"');
+          parts.push('Похожее поведение с другими каналами этой сети');
+        } else if (state === 'NEW_REG') {
+          var pubD = getVideoPublishDate();
+          var join = ch.joinDate;
+          if (pubD && join) {
+            var d = Math.floor((new Date(pubD).getTime() - new Date(join).getTime()) / 86400000);
+            parts.push('Канал зарегистрирован за ' + d + ' дн. до публикации видео');
+            parts.push('Дата регистрации: ' + join);
+          }
+        } else if (state === 'SUSPECT') {
+          if (ch.reasoning) parts.push('AI: ' + ch.reasoning);
+          parts.push('Низкая уверенность бот-сигналов (<70%)');
+        } else if (state === 'HUMAN') {
+          if (ch.reasoning) parts.push('AI: ' + ch.reasoning);
+          parts.push('Поведение похоже на органическую активность');
+        } else if (state === 'UNKNOWN') {
+          parts.push('Канал ещё не классифицирован.');
+          parts.push('Нажмите 🤖 Классифицировать чтобы определить статус.');
+        }
+        if (ch.analysisSummary) { parts.push('---'); parts.push(ch.analysisSummary); }
+        if (ch.targets && Object.keys(ch.targets).length) {
+          parts.push('---');
+          var tops = Object.entries(ch.targets).map(function(kv) {
+            return kv[0] + ': pro ' + ((kv[1]||{}).pro||0) + ', anti ' + ((kv[1]||{}).anti||0);
+          }).slice(0,3);
+          parts.push('Цели: ' + tops.join(' | '));
+        }
+        return parts.join('\n');
+      }
+
+      info.onmouseenter = function() {
+        var existing = document.getElementById('mbReasonPopover');
+        if (existing) existing.remove();
+        var popover = document.createElement('div');
+        popover.id = 'mbReasonPopover';
+        popover.style.cssText = 'position:fixed;background:#1a1a1a;border:1px solid #444;border-radius:6px;padding:10px 14px;color:#ddd;font-size:12px;line-height:1.5;max-width:380px;z-index:99998;box-shadow:0 4px 16px rgba(0,0,0,0.5);white-space:pre-wrap;font-family:ui-sans-serif,system-ui,sans-serif';
+        var rect = info.getBoundingClientRect();
+        popover.style.left = Math.min(rect.left + 20, window.innerWidth - 400) + 'px';
+        popover.style.top = Math.min(rect.top + 20, window.innerHeight - 200) + 'px';
+        var stateName = MB_BADGES[capturedPrimary] || capturedPrimary;
+        var explanation = buildExplanation(capturedPrimary, capturedChannel);
+        popover.innerHTML = '<div style="font-weight:600;margin-bottom:6px;color:' + MB_COLORS[capturedPrimary] + '">' + stateName + '</div>' + explanation.replace(/\n/g, '<br>');
+        document.body.appendChild(popover);
+      };
+      info.onmouseleave = function() {
+        var p = document.getElementById('mbReasonPopover');
+        if (p) p.remove();
+      };
+      container.appendChild(info);
+    })(channel, states, primary);
+
     author.parentNode.insertBefore(container, author.nextSibling);
     if (thread) {
       thread.style.borderLeft = '3px solid ' + MB_COLORS[primary];
@@ -2509,9 +2578,9 @@ function setupCommentObserver() {
         if (node.matches && node.matches('ytd-comment-thread-renderer, ytd-comment-view-model')) {
           try { parseitemNew(node); } catch (e) { console.warn('[MetaBot] observer parseitem failed:', e.message); }
         }
-        // Process nested renderers inside loaded batch containers
+        // Process nested renderers inside loaded batch containers and reply threads
         if (node.querySelectorAll) {
-          var inner = node.querySelectorAll('ytd-comment-thread-renderer, ytd-comment-view-model');
+          var inner = node.querySelectorAll('ytd-comment-thread-renderer, ytd-comment-view-model, ytd-comment-replies-renderer ytd-comment-view-model, ytd-comment-replies-renderer ytd-comment-renderer');
           for (var k = 0; k < inner.length; k++) {
             try { parseitemNew(inner[k]); } catch (e) { console.warn('[MetaBot] observer nested failed:', e.message); }
           }
