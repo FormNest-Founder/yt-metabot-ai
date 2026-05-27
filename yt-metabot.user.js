@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230405
+// @version      230406
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -1405,6 +1405,16 @@ function insertannNew(jNode) {
         '<li><b style="color:#fbc02d">⚠️ Подозрительные</b> — низкая уверенность бот-сигналов</li>' +
         '<li><b style="color:#43a047">✓ Люди</b> — органичная активность</li>' +
       '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🚀 Как пользоваться</h3>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc;font-size:12px">' +
+        '<li>Установите DeepSeek API key в поле выше (sk-...), нажмите Tab — увидите toast "Сохранено"</li>' +
+        '<li>MetaBot автоматически собирает данные о комментаторах при просмотре YouTube</li>' +
+        '<li>Когда в очереди ≥10 каналов — нажмите <b>🤖 Классифицировать</b> (batch до 20 каналов в DeepSeek)</li>' +
+        '<li>После classify не-HUMAN каналы попадают в очередь анализа паттернов</li>' +
+        '<li>Нажмите <b>🔍 Анализ паттернов</b> когда там накопится ≥10</li>' +
+        '<li>Нажмите <b>🕸 Кластеризовать</b> когда ≥3 канала с network_signals (выявляет ботосетки)</li>' +
+        '<li>Кнопка <b>[👁 Отслеживать]</b> у автора видео — добавит канал для auto-classify</li>' +
+      '</ul>' +
       '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🔬 Методы</h3>' +
       '<ul style="margin:0;padding-left:20px;color:#ccc">' +
         '<li>Сбор комментариев + метаданных каналов локально в IndexedDB</li>' +
@@ -1421,6 +1431,22 @@ function insertannNew(jNode) {
         '<li><b>YouTube DOM scraping</b> — joinDate, subs, videoCount из /about</li>' +
         '<li><b>Return YouTube Dislike API</b> — счётчик дислайков</li>' +
       '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🔄 Pipeline</h3>' +
+      '<pre style="background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:8px;font-size:11px;color:#aaa;overflow-x:auto;margin:0">' +
+'Комментарии YouTube\n' +
+'       ↓ (сбор автоматический)\n' +
+'[IndexedDB: channels + comments + clf_queue]\n' +
+'       ↓ 🤖 Классифицировать\n' +
+'[DeepSeek API → label: BOT/SUSPECT/HUMAN/UNKNOWN]\n' +
+'       ↓ (не-HUMAN auto-enqueue)\n' +
+'[analysis_queue]\n' +
+'       ↓ 🔍 Анализ паттернов\n' +
+'[DeepSeek API → themes/targets/network_signals]\n' +
+'       ↓ ≥3 каналов с signals\n' +
+'[🕸 Кластеризовать → networks]\n' +
+'       ↓\n' +
+'Цветные badges на комментариях' +
+      '</pre>' +
       '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">📚 Базы и источники</h3>' +
       '<ul style="margin:0;padding-left:20px;color:#ccc">' +
         '<li><a href="https://botnadzor.org" target="_blank" style="color:#6af">Ботнадзор</a> — RU база ботов VK (6.1M комментариев, GitHub: <a href="https://github.com/botnadzor/extension" target="_blank" style="color:#6af">extension</a>)</li>' +
@@ -1436,8 +1462,23 @@ function insertannNew(jNode) {
         '<li><a href="https://arxiv.org/pdf/2311.05791" target="_blank" style="color:#6af">Shajari 2023</a> — YouTube commenter mob detection (Graph2Vec)</li>' +
         '<li><a href="https://arxiv.org/pdf/2410.22716" target="_blank" style="color:#6af">Cinelli WWW\'25</a> — Cross-Platform CIB</li>' +
       '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🆘 Если не работает</h3>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc;font-size:12px">' +
+        '<li><b>Кнопки не реагируют</b> — F5 страницы, settings panel пересоздаётся</li>' +
+        '<li><b>"No API key set"</b> — введите ключ снова, нажмите Tab, проверьте toast</li>' +
+        '<li><b>Очередь не растёт</b> — прокрутите вниз к комментариям, дайте 15 сек на сбор</li>' +
+        '<li><b>Tampermonkey сломан</b> — переходите на Violentmonkey (стабильнее MV3)</li>' +
+        '<li><b>Нет кнопки Отслеживать</b> — выше viewport, прокрутите к заголовку видео</li>' +
+      '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🚧 Планы (T17-T20)</h3>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc;font-size:12px">' +
+        '<li><b>T17:</b> Локальные F1-F8 эвристики (entropy, repetition, interval regularity) — снижает API calls на 60-70%</li>' +
+        '<li><b>T18:</b> Temporal burst detection — выявление координации в 60-сек окнах</li>' +
+        '<li><b>T19:</b> Narrative tagging через EUvsDisinfo базу</li>' +
+        '<li><b>T20:</b> Pravda Network domain blacklist (190+ доменов из DFRLab)</li>' +
+      '</ul>' +
       '<div style="margin-top:18px;padding-top:12px;border-top:1px solid #2a2a2a;color:#666;font-size:11px">' +
-        'Версия: v' + GM_info.script.version + ' · Форк MetaBot для YouTube (asrdri/yt-metabot-user-js)' +
+        'Версия: v' + GM_info.script.version + ' · Форк MetaBot для YouTube · Под Violentmonkey/Tampermonkey' +
       '</div>' +
       '</div>';
     document.body.appendChild(overlay);
