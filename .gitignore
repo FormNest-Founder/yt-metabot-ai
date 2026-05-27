@@ -1,0 +1,17 @@
+# Backups created during development
+*.bak-*
+yt-metabot.user.js.bak-*
+
+# Test files from original repo
+yt-metabot-test.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Local-only build artifacts
+*.log
