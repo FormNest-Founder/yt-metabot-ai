@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230404
+// @version      230405
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -2231,7 +2231,15 @@ function parseColor(color, toNumber) {
 
 // ===== AI-augmented bot detection — DeepSeek connector =====
 async function callDeepSeek(messages) {
-  var apiKey = GM_getValue('deepseek_api_key');
+  // fix 2026-05-27: read via GM_config.get (where saveconfigNew writes),
+  // fallback to GM_getValue. Previously only GM_getValue → always empty
+  // because GM_config.save() bundles all fields under 'ytmetabot_config'.
+  var apiKey = '';
+  try { apiKey = GM_config.get('deepseek_api_key') || ''; } catch (e) {}
+  if (!apiKey) {
+    try { apiKey = GM_getValue('deepseek_api_key', '') || ''; } catch (e) {}
+  }
+  apiKey = (apiKey || '').trim();
   if (!apiKey) throw new Error('[MetaBot AI] No DeepSeek API key set in settings');
   return new Promise(function(resolve, reject) {
     GM_xmlhttpRequest({
