@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230500
+// @version      230501
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -658,42 +658,51 @@ mbHeuristics.compute = async function(channel, comments) {
   comments = comments || [];
   var signals = [];
   var score = 0;
+  var dataPoints = 0; // how many signals fired
 
-  // F1: completeness
-  var compScore = 0;
-  if (!channel.videoCount || channel.videoCount === 0) compScore -= 1;
-  if (!channel.subscriberCount || channel.subscriberCount < 100) compScore -= 1;
+  // F1: completeness — ONLY counts if VERY suspicious profile.
+  // Регулярный viewer-аккаунт без видео — НЕ бот-сигнал сам по себе.
+  // Засчитываем только КОМБО: молодой аккаунт <30 дней + нет подписчиков + нет видео.
   if (channel.joinDate) {
     var ageDays = (Date.now() - new Date(channel.joinDate).getTime()) / 86400000;
-    if (ageDays < 30) compScore -= 2;
+    if (ageDays < 30 && (!channel.subscriberCount || channel.subscriberCount === 0) && (!channel.videoCount || channel.videoCount === 0)) {
+      signals.push('F1:very_young_empty_account:' + Math.floor(ageDays) + 'd');
+      score += 20;
+      dataPoints++;
+    }
   }
-  if (compScore <= -3) { signals.push('F1:young_minimal_channel'); score += 30; }
 
-  // F2: generic ratio
-  if (comments.length >= 3) {
+  // F2: generic ratio — only if >=5 comments (нужна большая выборка)
+  if (comments.length >= 5) {
     var generic = comments.filter(function(c){ return mbHeuristics.isGeneric(c.text); }).length;
     var ratio = generic / comments.length;
-    if (ratio > 0.5) { signals.push('F2:high_generic_ratio:' + ratio.toFixed(2)); score += 25; }
+    if (ratio > 0.6) {
+      signals.push('F2:high_generic_ratio:' + ratio.toFixed(2));
+      score += 25;
+      dataPoints++;
+    }
   }
 
-  // F3: text entropy
-  if (comments.length >= 3) {
-    var totalEntropy = 0;
-    var n = 0;
-    for (var i = 0; i < comments.length; i++) {
-      if (comments[i].text && comments[i].text.length >= 10) {
-        totalEntropy += mbHeuristics.shannonEntropy(comments[i].text);
-        n++;
+  // F3: text entropy — only if >=5 long comments
+  if (comments.length >= 5) {
+    var longComments = comments.filter(function(c) { return c.text && c.text.length >= 20; });
+    if (longComments.length >= 3) {
+      var totalEntropy = 0;
+      for (var i = 0; i < longComments.length; i++) {
+        totalEntropy += mbHeuristics.shannonEntropy(longComments[i].text);
+      }
+      var avgEntropy = totalEntropy / longComments.length;
+      // Very low entropy = templates. Healthy text >3.5. Threshold 2.5 (was 3.0 — too lax)
+      if (avgEntropy < 2.5) {
+        signals.push('F3:very_low_entropy:' + avgEntropy.toFixed(2));
+        score += 20;
+        dataPoints++;
       }
     }
-    if (n > 0) {
-      var avgEntropy = totalEntropy / n;
-      if (avgEntropy < 3.0) { signals.push('F3:low_entropy:' + avgEntropy.toFixed(2)); score += 20; }
-    }
   }
 
-  // F4: interval regularity
-  if (comments.length >= 3) {
+  // F4: interval regularity — only if >=5 comments
+  if (comments.length >= 5) {
     var sorted = comments.slice().sort(function(a,b){ return a.timestamp - b.timestamp; });
     var intervals = [];
     for (var j = 1; j < sorted.length; j++) {
@@ -702,42 +711,68 @@ mbHeuristics.compute = async function(channel, comments) {
     var mean = intervals.reduce(function(s,x){ return s+x; }, 0) / intervals.length;
     var variance = intervals.reduce(function(s,x){ return s + (x-mean)*(x-mean); }, 0) / intervals.length;
     var stdDev = Math.sqrt(variance);
-    if (stdDev < 300) { signals.push('F4:regular_intervals:' + stdDev.toFixed(0)); score += 25; }
+    // Very regular = bot. Tighten: <60s (was 300s) for bot-tier regularity
+    if (stdDev < 60) {
+      signals.push('F4:robotic_intervals:stddev=' + stdDev.toFixed(0) + 's');
+      score += 30;
+      dataPoints++;
+    }
   }
 
-  // F7: username entropy
+  // F7: username — ONLY very specific bot patterns
   if (channel.handle || channel.channelId) {
-    var u = (channel.handle || '').replace(/^@/, '') || channel.channelId.replace(/^UC/, '');
-    var uEnt = mbHeuristics.shannonEntropy(u);
-    if (/[а-я]+_?\d{3,}/i.test(u) || /^[a-z]+\d{4,8}$/i.test(u)) {
-      signals.push('F7:bot_username_pattern');
+    var u = (channel.handle || '').replace(/^@/, '');
+    if (u && /^[a-zA-Z]+\d{6,}$/.test(u)) {
+      // EnglishWord followed by 6+ digits — typical bot generation
+      signals.push('F7:auto_generated_handle');
       score += 15;
-    }
-    if (uEnt < 2.0) { signals.push('F7:low_username_entropy:' + uEnt.toFixed(2)); score += 10; }
-  }
-
-  // F8: subs/video ratio
-  if (channel.subscriberCount > 0 && channel.videoCount > 0 && channel.joinDate) {
-    var ageDays8 = (Date.now() - new Date(channel.joinDate).getTime()) / 86400000;
-    if (ageDays8 > 365) {
-      var ratio8 = channel.subscriberCount / channel.videoCount;
-      if (ratio8 < 50) { signals.push('F8:low_subs_video_ratio:' + ratio8.toFixed(1)); score += 10; }
+      dataPoints++;
     }
   }
 
-  // RU lexicon
+  // F8: subs/video ratio — skip (too many edge cases, not a strong signal)
+
+  // RU lexicon — STRONG signal. Hits >=3 raises significantly.
+  // Single hit could be quote/discussion — недостаточно.
   if (comments.length > 0) {
     var lexHits = 0;
     for (var k = 0; k < comments.length; k++) {
       lexHits += mbHeuristics.hasRuBotLexicon(comments[k].text);
     }
-    if (lexHits >= 2) { signals.push('RU:bot_lexicon_hits:' + lexHits); score += 30; }
+    if (lexHits >= 3) {
+      signals.push('RU:strong_bot_lexicon:' + lexHits + '_hits');
+      score += 35;
+      dataPoints++;
+    } else if (lexHits === 2) {
+      signals.push('RU:weak_bot_lexicon:' + lexHits + '_hits');
+      score += 15;
+      dataPoints++;
+    }
+    // 1 hit — ignored (could be just quoting)
   }
+
+  // Aggregate verdict — CONSERVATIVE:
+  // - BOT_HEURISTIC требует score >= 80 AND ≥2 different signals
+  // - SUSPECT_HEURISTIC требует score >= 40 AND ≥2 signals
+  // - HUMAN_HEURISTIC: только если есть данные (>=10 комментов) И nothing подозрительно
+  // - В остальных случаях — null (нужен AI или просто UNKNOWN)
+
+  var verdict = null;
+  if (score >= 80 && dataPoints >= 2) {
+    verdict = 'BOT_HEURISTIC';
+  } else if (score >= 40 && dataPoints >= 2) {
+    verdict = 'SUSPECT_HEURISTIC';
+  } else if (comments.length >= 10 && score === 0) {
+    // Достаточно данных + ноль сигналов = уверенно HUMAN
+    verdict = 'HUMAN_HEURISTIC';
+  }
+  // Otherwise — null (нужен AI или просто UNKNOWN badge)
 
   return {
     score: score,
     signals: signals,
-    verdict: score >= 50 ? 'BOT_HEURISTIC' : (score >= 25 ? 'SUSPECT_HEURISTIC' : (score === 0 ? 'HUMAN_HEURISTIC' : null))
+    dataPoints: dataPoints,
+    verdict: verdict
   };
 };
 
