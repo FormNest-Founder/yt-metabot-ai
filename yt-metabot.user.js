@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230407
+// @version      230408
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -559,6 +559,25 @@ mbdb.countNetworks = function() {
       var req = db.transaction('networks', 'readonly').objectStore('networks').count();
       req.onsuccess = function() { resolve(req.result); };
       req.onerror = function(e) { reject(e.target.error); };
+    });
+  });
+};
+
+mbdb.setUserLabel = function(channelId, userLabel) {
+  return mbdb.getDb().then(function(db) {
+    return new Promise(function(resolve, reject) {
+      var tx = db.transaction('channels', 'readwrite');
+      var store = tx.objectStore('channels');
+      var getReq = store.get(channelId);
+      getReq.onsuccess = function() {
+        var ch = getReq.result || { channelId: channelId };
+        ch.user_label = userLabel;  // null to clear
+        ch.user_label_at = userLabel ? Date.now() : null;
+        ch.lastSeen = Date.now();
+        store.put(ch);
+      };
+      tx.oncomplete = function() { resolve(); };
+      tx.onerror = function() { reject(tx.error); };
     });
   });
 };
@@ -1936,14 +1955,19 @@ function applyBadge(jNode, channel) {
     var oldBadge = author.parentNode.querySelector('.mb-ai-badge');
     if (oldBadge) oldBadge.remove();
     var thread = root.closest ? root.closest('ytd-comment-thread-renderer') : null;
+    // Compute states — user_label has TOP priority (manual override)
     var states = [];
-    var inErky = (typeof arrayERKY !== 'undefined' && arrayERKY.indexOf(channel.channelId) >= 0);
-    if (channel.label === 'BOT' || inErky) states.push('BOT');
-    if (channel.network_cluster_id) states.push('NETWORK');
-    if (isNewReg(channel.joinDate, getVideoPublishDate())) states.push('NEW_REG');
-    if (channel.label === 'SUSPECT' && states.indexOf('SUSPECT') < 0) states.push('SUSPECT');
-    if (channel.label === 'HUMAN' && states.length === 0) states.push('HUMAN');
-    if (states.length === 0) states.push('UNKNOWN');
+    if (channel.user_label) {
+      states.push(channel.user_label);
+    } else {
+      var inErky = (typeof arrayERKY !== 'undefined' && arrayERKY.indexOf(channel.channelId) >= 0);
+      if (channel.label === 'BOT' || inErky) states.push('BOT');
+      if (channel.network_cluster_id) states.push('NETWORK');
+      if (isNewReg(channel.joinDate, getVideoPublishDate())) states.push('NEW_REG');
+      if (channel.label === 'SUSPECT' && states.indexOf('SUSPECT') < 0) states.push('SUSPECT');
+      if (channel.label === 'HUMAN' && states.length === 0) states.push('HUMAN');
+      if (states.length === 0) states.push('UNKNOWN');
+    }
     var primary = states[0];
     var container = document.createElement('span');
     container.className = 'mb-ai-badge';
@@ -1960,6 +1984,13 @@ function applyBadge(jNode, channel) {
       pill.textContent = MB_BADGES[state];
       container.appendChild(pill);
     });
+    if (channel.user_label) {
+      var userMark = document.createElement('span');
+      userMark.textContent = '👤';
+      userMark.title = 'Установлено вручную ' + new Date(channel.user_label_at).toLocaleString();
+      userMark.style.cssText = 'margin-left:4px;font-size:10px;opacity:0.7';
+      container.appendChild(userMark);
+    }
     var lines = [];
     lines.push(primary + (channel.confidence ? ' · ' + Math.round(channel.confidence*100) + '%' : ''));
     if (channel.analysisSummary) lines.push(channel.analysisSummary);
@@ -1995,6 +2026,9 @@ function applyBadge(jNode, channel) {
 
       function buildExplanation(state, ch) {
         var parts = [];
+        if (ch.user_label) {
+          parts.unshift('Установлено вручную (' + new Date(ch.user_label_at).toLocaleString() + ')');
+        }
         if (state === 'BOT') {
           if (ch.reasoning) parts.push('AI: ' + ch.reasoning);
           if (ch.confidence) parts.push('Уверенность: ' + Math.round(ch.confidence*100) + '%');
@@ -2043,11 +2077,68 @@ function applyBadge(jNode, channel) {
         var stateName = MB_BADGES[capturedPrimary] || capturedPrimary;
         var explanation = buildExplanation(capturedPrimary, capturedChannel);
         popover.innerHTML = '<div style="font-weight:600;margin-bottom:6px;color:' + MB_COLORS[capturedPrimary] + '">' + stateName + '</div>' + explanation.replace(/\n/g, '<br>');
+
+        // Manual override buttons
+        var btnBar = document.createElement('div');
+        btnBar.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid #333;display:flex;flex-wrap:wrap;gap:4px;align-items:center';
+        var labelEl = document.createElement('div');
+        labelEl.textContent = 'Установить статус вручную:';
+        labelEl.style.cssText = 'width:100%;font-size:11px;color:#888;margin-bottom:4px';
+        btnBar.appendChild(labelEl);
+        var overrideLabels = [
+          ['BOT', '🤖 БОТ'],
+          ['NETWORK', '🕸 СЕТЬ'],
+          ['NEW_REG', '🆕 НОВОРЕГ'],
+          ['SUSPECT', '⚠️ ПОДОЗР'],
+          ['HUMAN', '✓ ЧЕЛОВЕК'],
+          ['UNKNOWN', '? UNK']
+        ];
+        overrideLabels.forEach(function(pair) {
+          var key = pair[0], txt = pair[1];
+          var b = document.createElement('button');
+          b.textContent = txt;
+          b.style.cssText = 'background:' + MB_COLORS[key] + '22;color:' + MB_COLORS[key] + ';border:1px solid ' + MB_COLORS[key] + '55;border-radius:8px;padding:3px 8px;font-size:11px;cursor:pointer';
+          b.onclick = async function(ev) {
+            ev.stopPropagation();
+            try {
+              await mbdb.setUserLabel(capturedChannel.channelId, key);
+              if (typeof showToast === 'function') showToast('Статус: ' + txt);
+              if (typeof refreshBadgesForChannel === 'function') await refreshBadgesForChannel(capturedChannel.channelId);
+              var pop = document.getElementById('mbReasonPopover');
+              if (pop) pop.remove();
+            } catch (e) { console.warn('[MetaBot] setUserLabel failed:', e.message); }
+          };
+          btnBar.appendChild(b);
+        });
+        if (capturedChannel.user_label) {
+          var reset = document.createElement('button');
+          reset.textContent = '↻ Сбросить override';
+          reset.style.cssText = 'background:transparent;color:#888;border:1px dashed #444;border-radius:8px;padding:3px 8px;font-size:11px;cursor:pointer;margin-left:8px';
+          reset.onclick = async function(ev) {
+            ev.stopPropagation();
+            try {
+              await mbdb.setUserLabel(capturedChannel.channelId, null);
+              if (typeof showToast === 'function') showToast('Override сброшен');
+              if (typeof refreshBadgesForChannel === 'function') await refreshBadgesForChannel(capturedChannel.channelId);
+              var pop = document.getElementById('mbReasonPopover');
+              if (pop) pop.remove();
+            } catch (e) { console.warn('[MetaBot] reset failed:', e.message); }
+          };
+          btnBar.appendChild(reset);
+        }
+        popover.appendChild(btnBar);
+
+        // Keep popover alive when mouse is on it
+        popover.onmouseenter = function() { popover._mbHover = true; };
+        popover.onmouseleave = function() { popover._mbHover = false; popover.remove(); };
+
         document.body.appendChild(popover);
       };
       info.onmouseleave = function() {
-        var p = document.getElementById('mbReasonPopover');
-        if (p) p.remove();
+        setTimeout(function() {
+          var p = document.getElementById('mbReasonPopover');
+          if (p && !p._mbHover) p.remove();
+        }, 200);
       };
       container.appendChild(info);
     })(channel, states, primary);
