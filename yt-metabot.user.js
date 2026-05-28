@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230501
+// @version      230600
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -656,6 +656,10 @@ mbHeuristics.hasRuBotLexicon = function(text) {
 
 mbHeuristics.compute = async function(channel, comments) {
   comments = comments || [];
+  // Fast path: no data at all — skip full computation
+  if (!channel.joinDate && comments.length < 3) {
+    return { score: 0, signals: [], dataPoints: 0, verdict: null };
+  }
   var signals = [];
   var score = 0;
   var dataPoints = 0; // how many signals fired
@@ -1822,26 +1826,39 @@ async function parseitemNew(jNode) {
       // Previously only known channels got badges → lazy-loaded comments stayed untagged.
       var channelData = channel || { channelId: userID, label: null };
       applyBadge(jNode, channelData);
-      // Local heuristics — run if no AI label yet
-      if (channel && !channel.label && !channel.user_label) {
-        try {
-          var allComments = await mbdb.getComments(userID, 20);
-          var heur = await mbHeuristics.compute(channel, allComments);
-          if (heur.verdict) {
-            await mbdb.upsertChannel({
-              channelId: userID,
-              heuristic_label: heur.verdict,
-              heuristic_score: heur.score,
-              heuristic_signals: heur.signals,
-              heuristic_at: Date.now()
-            });
-            var updatedChannel = await mbdb.getChannel(userID);
-            if (updatedChannel) applyBadge(jNode, updatedChannel);
-          }
-        } catch (e) { console.warn('[MetaBot Heur] failed:', e.message); }
+      // Local heuristics — only if no AI/user label AND not yet computed (heuristic_at guard)
+      if (channel && !channel.label && !channel.user_label && !channel.heuristic_at) {
+        var deferHeur = function() {
+          mbdb.getComments(userID, 10).then(function(allComments) {
+            mbHeuristics.compute(channel, allComments).then(function(heur) {
+              var now = Date.now();
+              if (heur.verdict) {
+                mbdb.upsertChannel({
+                  channelId: userID,
+                  heuristic_label: heur.verdict,
+                  heuristic_score: heur.score,
+                  heuristic_signals: heur.signals,
+                  heuristic_at: now
+                }).then(function() {
+                  mbdb.getChannel(userID).then(function(updated) {
+                    if (updated) applyBadge(jNode, updated);
+                  });
+                }).catch(function(e) { console.warn('[MetaBot Heur] upsert failed:', e.message); });
+              } else {
+                // Mark as checked so we don't re-run on every new comment from this channel
+                mbdb.upsertChannel({ channelId: userID, heuristic_at: now }).catch(function(){});
+              }
+            }).catch(function(e) { console.warn('[MetaBot Heur] compute failed:', e.message); });
+          }).catch(function(e) { console.warn('[MetaBot Heur] getComments failed:', e.message); });
+        };
+        if (typeof requestIdleCallback === 'function') {
+          requestIdleCallback(deferHeur, { timeout: 5000 });
+        } else {
+          setTimeout(deferHeur, 1000);
+        }
       }
       if (!channel || !channel.label) {
-        await mbdb.enqueueForClassification(userID);
+        mbdb.enqueueForClassification(userID).catch(function(){});
       }
     } catch (e) { console.warn('[MetaBot AI] collector failed:', e.message); }
   })(userID, jNode);
@@ -2162,6 +2179,10 @@ function applyBadge(jNode, channel) {
   try {
     var root = jNode instanceof Element ? jNode : (jNode[0] || jNode);
     if (!root || !root.querySelector) return;
+    // Skip re-render if badge state hasn't changed
+    var sig = (channel.user_label||'') + '|' + (channel.heuristic_label||'') + '|' + (channel.label||'') + '|' + (channel.network_cluster_id||'') + '|' + (channel.joinDate||'');
+    if (root._mbBadgeSig === sig) return;
+    root._mbBadgeSig = sig;
     var author = root.querySelector('#author-text');
     if (!author) return;
     var oldBadge = author.parentNode.querySelector('.mb-ai-badge');
@@ -2886,6 +2907,16 @@ function setupCommentObserver() {
   }
   if (window._metabotObserver) return;
 
+  var pendingNodes = new Set();
+  var flushTimer = null;
+  function flushPending() {
+    var batch = Array.from(pendingNodes);
+    pendingNodes.clear();
+    flushTimer = null;
+    for (var i = 0; i < batch.length; i++) {
+      try { parseitemNew(batch[i]); } catch (e) { console.warn('[MetaBot] observer parseitem failed:', e.message); }
+    }
+  }
   var observer = new MutationObserver(function(mutations) {
     for (var i = 0; i < mutations.length; i++) {
       var added = mutations[i].addedNodes;
@@ -2893,21 +2924,21 @@ function setupCommentObserver() {
         var node = added[j];
         if (node.nodeType !== 1) continue;
         if (node.matches && node.matches('ytd-comment-thread-renderer, ytd-comment-view-model')) {
-          try { parseitemNew(node); } catch (e) { console.warn('[MetaBot] observer parseitem failed:', e.message); }
-        }
-        // Process nested renderers inside loaded batch containers and reply threads
-        if (node.querySelectorAll) {
+          pendingNodes.add(node);
+        } else if (node.querySelectorAll) {
+          // Process nested renderers inside loaded batch containers and reply threads
           var inner = node.querySelectorAll('ytd-comment-thread-renderer, ytd-comment-view-model, ytd-comment-replies-renderer ytd-comment-view-model, ytd-comment-replies-renderer ytd-comment-renderer');
-          for (var k = 0; k < inner.length; k++) {
-            try { parseitemNew(inner[k]); } catch (e) { console.warn('[MetaBot] observer nested failed:', e.message); }
-          }
+          for (var k = 0; k < inner.length; k++) pendingNodes.add(inner[k]);
         }
       }
+    }
+    if (!flushTimer && pendingNodes.size > 0) {
+      flushTimer = setTimeout(flushPending, 250);
     }
   });
   observer.observe(comments, { childList: true, subtree: true });
   window._metabotObserver = observer;
-  console.log('[MetaBot] MutationObserver attached to #comments');
+  console.log('[MetaBot] MutationObserver attached to #comments (debounced 250ms)');
 }
 
 // T4: YouTube SPA — reset observer on navigation to new video
