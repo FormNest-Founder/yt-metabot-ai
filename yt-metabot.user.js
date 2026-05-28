@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230701
+// @version      230702
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -2544,9 +2544,16 @@ async function showChannelHistory(channelId) {
     if (existing) existing.remove();
 
     var channel = await mbdb.getChannel(channelId);
-    if (!channel) { if (typeof showToast === 'function') showToast('Канал не в базе'); return; }
-
+    // Get comments even if no channel record exists
     var comments = await mbdb.getComments(channelId, 999);
+    if (!channel && comments.length === 0) {
+      if (typeof showToast === 'function') showToast('Нет данных об этом канале');
+      return;
+    }
+    // If no channel record but we have comments — build minimal channel for display
+    if (!channel) {
+      channel = { channelId: channelId, displayName: channelId };
+    }
     comments.sort(function(a, b) { return (b.timestamp || 0) - (a.timestamp || 0); });
 
     // Compute stats
