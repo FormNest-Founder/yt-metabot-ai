@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230702
+// @version      230800
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -139,6 +139,11 @@ GM_config.init( {
       'label': 'DeepSeek API Key',
       'type': 'text',
       'default': ''
+    },
+    'mbAutoReportSpam': {
+      'label': 'Auto-report SPAM',
+      'type': 'checkbox',
+      'default': false
     },
     'mb_batch_interval_min': {
       'label': 'Batch interval (min)',
@@ -673,7 +678,7 @@ mbdb.countNetworks = function() {
   });
 };
 
-mbdb.setUserLabel = function(channelId, userLabel) {
+mbdb.setUserLabel = function(channelId, userLabel, toggle) {
   return mbdb.getDb().then(function(db) {
     return new Promise(function(resolve, reject) {
       var tx = db.transaction('channels', 'readwrite');
@@ -681,8 +686,23 @@ mbdb.setUserLabel = function(channelId, userLabel) {
       var getReq = store.get(channelId);
       getReq.onsuccess = function() {
         var ch = getReq.result || { channelId: channelId };
-        ch.user_label = userLabel;  // null to clear
-        ch.user_label_at = userLabel ? Date.now() : null;
+        // Migration: old user_label (string) → user_labels (array)
+        if (ch.user_label && !ch.user_labels) {
+          ch.user_labels = [ch.user_label];
+          ch.user_label = null;
+        }
+        ch.user_labels = ch.user_labels || [];
+        if (userLabel === null) {
+          ch.user_labels = []; // clear all
+        } else if (toggle) {
+          var idx = ch.user_labels.indexOf(userLabel);
+          if (idx >= 0) ch.user_labels.splice(idx, 1);
+          else ch.user_labels.push(userLabel);
+        } else {
+          // replace single
+          if (ch.user_labels.indexOf(userLabel) < 0) ch.user_labels.push(userLabel);
+        }
+        ch.user_label_at = ch.user_labels.length > 0 ? Date.now() : null;
         ch.lastSeen = Date.now();
         store.put(ch);
       };
@@ -709,6 +729,64 @@ var RU_BOT_LEXICON = [
   /\bспециальн\w+ военн\w+ операци\w+/i,
   /\bбандеровц\w+/i,
   /\bнав[оа]льнен\w+/i
+];
+
+var RU_VATNIK_LEXICON = [
+  /\bангл[оа]сакс\w*/i,
+  /\bпиндос\w*/i,
+  /\bколлективн\w+ запад\w*/i,
+  /\bзагнивающ\w+ запад\w*/i,
+  /\bимпери\w+ лжи/i,
+  /\bгейроп\w*/i,
+  /\bхохл\w*/i,
+  /\bбандеровц\w*/i,
+  /\bроссия (—|-) велик\w+ держав\w*/i,
+  /\bвсё врут (про россию|про русских|западные)/i,
+  /\bденацификаци\w+/i,
+  /\bденат(о|и)фикаци\w*/i,
+  /\bвсе верн(о|ё)м/i
+];
+var RU_PUTINIST_LEXICON = [
+  /\bпутин (молодец|красавчик|сильн\w+|мудр\w+|умн\w+|велик\w+)/i,
+  /\bпутин (—|-) наш президент/i,
+  /\bвлад[иa]мир владимирович/i,
+  /\bпрезидент (защищает|оберегает|сохраняет)/i,
+  /\bзеленск\w+ клоун/i,
+  /\bправильн\w+ решен\w+ президент\w*/i,
+  /\bвв(п|х) (наш |правильн)/i,
+  /\bтолько (путин|он) сможет/i,
+  /\bголосуй за путина/i,
+  /\bпереизбран\w+ путин\w*/i
+];
+var RU_SOVOK_LEXICON = [
+  /\bраньше (всё |всегда )?(было )?лучше/i,
+  /\bв (наше|совет\w+) время/i,
+  /\b(распад|развал) (ссср|союза)/i,
+  /\bвс(ё|е) разрушили (демократ\w*|перестройщик\w*|ельцин)/i,
+  /\bпри сталин\w*/i,
+  /\bсамая (велик\w+) страна (—|-) ссср/i,
+  /\bпотерял[иа] страну/i,
+  /\bдо девяност\w*/i,
+  /\bв (ссср|союзе) (всё|это) бесплатн\w*/i,
+  /\bгорбачев[оа]? предал/i,
+  /\bбыли (же )?рабоч\w+ места/i
+];
+
+// SPAM patterns — adult ads, scam links, obfuscated commercial spam
+var RU_SPAM_LEXICON = [
+  /\bтех самых\b/i,
+  /\bгодик[ао]в\b/i,
+  /\b3axod|зax[оo]d|зaxoд|3axoдитe\b/i,
+  /\bзайки?\s*[🌼🌸🌷🌹🌺]/i,
+  /\bдевочки?\s*[🌼🌸🌷🌹🌺]/i,
+  /[🌼🌸🌷🌹🌺]\s*тех\s*самых\s*[🌼🌸🌷🌹🌺]/i,
+  /\b(гипноз|порча|приворот|маг|астролог|таро)\s+(онлайн|поможет|снят)/i,
+  /\bзаработ(а|о)к\s+(онлайн|на телефоне|без вложений)/i,
+  /\bкупит[ье]?\s+(подписчик|просмотр|лайк)/i,
+  /\bнакрутк[ау]\b/i,
+  /\bкриптовалют\w+\s+(заработок|стратеги)/i,
+  /\bsesa\.pw|sесa\.рw/i,
+  /\b[a-zA-Z]{2,3}[.0-9_]+[аеоруАЕОРУ]+/
 ];
 
 var RU_GENERIC_PATTERNS = [
@@ -863,28 +941,39 @@ mbHeuristics.compute = async function(channel, comments) {
     // 1 hit — ignored (could be just quoting)
   }
 
-  // Aggregate verdict — CONSERVATIVE:
-  // - BOT_HEURISTIC требует score >= 80 AND ≥2 different signals
-  // - SUSPECT_HEURISTIC требует score >= 40 AND ≥2 signals
-  // - HUMAN_HEURISTIC: только если есть данные (>=10 комментов) И nothing подозрительно
-  // - В остальных случаях — null (нужен AI или просто UNKNOWN)
-
-  var verdict = null;
-  if (score >= 80 && dataPoints >= 2) {
-    verdict = 'BOT_HEURISTIC';
-  } else if (score >= 40 && dataPoints >= 2) {
-    verdict = 'SUSPECT_HEURISTIC';
-  } else if (comments.length >= 10 && score === 0) {
-    // Достаточно данных + ноль сигналов = уверенно HUMAN
-    verdict = 'HUMAN_HEURISTIC';
+  // New category lexicon checks (VATNIK / PUTINIST / SOVOK / SPAM)
+  var vatnikHits = 0, putinistHits = 0, sovokHits = 0, spamHits = 0;
+  for (var ci = 0; ci < comments.length; ci++) {
+    var txt = comments[ci].text || '';
+    for (var vi = 0; vi < RU_VATNIK_LEXICON.length; vi++) if (RU_VATNIK_LEXICON[vi].test(txt)) { vatnikHits++; break; }
+    for (var pi = 0; pi < RU_PUTINIST_LEXICON.length; pi++) if (RU_PUTINIST_LEXICON[pi].test(txt)) { putinistHits++; break; }
+    for (var si = 0; si < RU_SOVOK_LEXICON.length; si++) if (RU_SOVOK_LEXICON[si].test(txt)) { sovokHits++; break; }
+    for (var spi = 0; spi < RU_SPAM_LEXICON.length; spi++) if (RU_SPAM_LEXICON[spi].test(txt)) { spamHits++; break; }
   }
-  // Otherwise — null (нужен AI или просто UNKNOWN badge)
+
+  var extraLabels = [];
+  if (vatnikHits >= 2) { signals.push('VATNIK:hits=' + vatnikHits); score += vatnikHits >= 4 ? 35 : 20; dataPoints++; extraLabels.push('VATNIK'); }
+  if (putinistHits >= 2) { signals.push('PUTINIST:hits=' + putinistHits); score += putinistHits >= 4 ? 35 : 20; dataPoints++; extraLabels.push('PUTINIST'); }
+  if (sovokHits >= 2) { signals.push('SOVOK:hits=' + sovokHits); score += sovokHits >= 4 ? 30 : 18; dataPoints++; extraLabels.push('SOVOK'); }
+  // SPAM — даже один яркий паттерн = достаточно
+  if (spamHits >= 1) { signals.push('SPAM:hits=' + spamHits); score += spamHits >= 2 ? 60 : 40; dataPoints++; extraLabels.push('SPAM'); }
+
+  // Multi-label verdict
+  var verdict_labels = [];
+  if (extraLabels.indexOf('SPAM') >= 0) verdict_labels.push('SPAM');
+  if (score >= 80 && dataPoints >= 2) verdict_labels.push('BOT');
+  else if (score >= 40 && dataPoints >= 2 && verdict_labels.indexOf('SPAM') < 0) verdict_labels.push('SUSPECT');
+  else if (comments.length >= 10 && score === 0 && extraLabels.length === 0) verdict_labels.push('HUMAN');
+  for (var eli = 0; eli < extraLabels.length; eli++) {
+    if (verdict_labels.indexOf(extraLabels[eli]) < 0) verdict_labels.push(extraLabels[eli]);
+  }
 
   return {
     score: score,
     signals: signals,
     dataPoints: dataPoints,
-    verdict: verdict
+    verdict: verdict_labels[0] ? verdict_labels[0] + '_HEURISTIC' : null,  // legacy
+    verdict_labels: verdict_labels  // new multi
   };
 };
 
@@ -1606,7 +1695,7 @@ function insertannNew(jNode) {
   ytoinfosspan.style = 'font-size:1.4rem;max-width:640px;margin:-10px auto 1em auto;display:none';
   $(jNode).find('div#title').after(ytoinfosspan);
   var settingsspan = document.createElement('span');
-  settingsspan.innerHTML = `<style>#config{font:13px/1.5 ui-sans-serif,system-ui,sans-serif;color:#ddd;background:#0e0e0e;border-radius:8px;padding:0;position:relative}#config .mb-header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #2a2a2a}#config .mb-header img{width:32px;height:32px;border-radius:4px}#config .mb-header h2{margin:0;font-size:15px;font-weight:600}#config .mb-version{margin-left:auto;font-size:11px;color:#777}#config .mb-section{padding:12px 16px;border-bottom:1px solid #1f1f1f}#config .mb-section h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:600}#config .mb-row{display:flex;align-items:center;gap:10px;margin:6px 0}#config .mb-row label{flex:1;cursor:pointer}#config input[type="checkbox"]{width:16px;height:16px;cursor:pointer;accent-color:#5af}#config input[type="password"],#config input[type="text"],#config select{background:#1a1a1a;color:#eee;border:1px solid #333;border-radius:4px;padding:5px 8px;font-size:13px;outline:none}#config input:focus,#config select:focus{border-color:#5af}#config .mb-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#2a3a4f;color:#fff;border:1px solid #3a5070;border-radius:4px;cursor:pointer;font-size:13px}#config .mb-btn:hover{background:#3a5070}#config .mb-btn.primary{background:#2a5a3a;border-color:#3a703a}#config .mb-btn.primary:hover{background:#3a703a}#config .mb-tracked-list,#config .mb-networks-list{max-height:120px;overflow-y:auto;background:#161616;padding:6px;border:1px solid #2a2a2a;border-radius:4px;font-size:12px}#config .mb-tracked-item,#config .mb-network-item{display:flex;align-items:center;padding:4px 6px;border-radius:3px}#config .mb-tracked-item:hover,#config .mb-network-item:hover{background:#1f1f1f}#config .mb-remove{color:#f55;cursor:pointer;margin-left:auto;padding:0 6px}#config .mb-stats{font-size:11px;color:#888;margin-top:6px}#config .mb-toast{position:absolute;top:8px;right:8px;background:#2a5a3a;color:#fff;padding:6px 10px;border-radius:4px;font-size:12px;display:none;z-index:10}</style><div class="mb-header"><img src="https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png"><h2>MetaBot · AI Bot Detection</h2><span class="mb-version">v${GM_info.script.version}</span></div><div class="mb-section"><h3>DeepSeek API</h3><div class="mb-row"><label for="deepseek_api_key">API Key:</label><input type="password" id="deepseek_api_key" placeholder="sk-..." style="width:280px"></div><div class="mb-row"><label><input type="checkbox" id="mbAutoClassify"> Авто-классификация для tracked-каналов</label></div></div><div class="mb-section"><h3>Детекция ботов</h3><div style="font-size:11px;color:#888;margin-bottom:6px;line-height:1.5">DeepSeek AI + локальные эвристики (entropy, частота, кросс-канал) + публичные ресурсы:<br><a href="https://botnadzor.org" target="_blank" style="color:#6af">Ботнадзор</a> · <a href="https://euvsdisinfo.eu" target="_blank" style="color:#6af">EUvsDisinfo</a> · <a href="https://factcheck.by" target="_blank" style="color:#6af">Factcheck.BY</a> · <a href="https://dfrlab.org" target="_blank" style="color:#6af">DFRLab</a></div><div class="mb-row"><label>Действие при обнаружении:</label><select id="mbcddm1"><option value="1">Помечать</option><option value="2">Скрывать</option></select></div><div class="mb-row"><label><input type="checkbox" id="mbcbox1"> Авто-дизлайк ботам</label></div><div class="mb-row"><label><input type="checkbox" id="mbcbox2"> Скрывать длинные подписи Like/Dislike</label></div></div><div class="mb-section"><h3>Отслеживаемые каналы <span id="mbTrackedCount" style="font-weight:normal;color:#666"></span></h3><div class="mb-tracked-list" id="mbTrackedList"><div style="color:#666;font-style:italic;padding:8px;text-align:center">Нет отслеживаемых каналов.<br>Откройте видео и нажмите [👁 Отслеживать] под автором.</div></div></div><div class="mb-section"><h3>Известные ботосетки <span id="mbNetworksCount" style="font-weight:normal;color:#666"></span></h3><div class="mb-networks-list" id="mbNetworksList"><div style="color:#666;font-style:italic;padding:8px;text-align:center">Сетки не выявлены.<br>Нажмите [🕸 Кластеризовать] после анализа паттернов.</div></div></div><div class="mb-section"><h3>Действия</h3><div class="mb-row" style="flex-wrap:wrap;gap:6px"><button id="mbClassifyBtn" class="mb-btn primary">🤖 Классифицировать</button><button id="mbAnalyzePatternsBtn" class="mb-btn">🔍 Анализ паттернов</button><button id="mbClusterBtn" class="mb-btn">🕸 Кластеризовать</button></div><div class="mb-stats" id="mbStats">Каналов: 0 · Очередь: 0 · Комментариев: 0 · Сеток: 0</div></div><div class="mb-section" style="border-bottom:none;padding-top:8px"><div class="mb-row" style="font-size:11px;color:#666"><a id="urlgithub" data-url="https://github.com/asrdri/yt-metabot-user-js/" style="color:#6af;cursor:pointer">GitHub</a><span id="mbAboutBtn" style="cursor:pointer;color:#6af;margin:0 12px">ℹ️ О скрипте</span><span style="margin-left:auto"><span id="resetbtn" style="cursor:pointer;color:#a55">Сброс</span></span></div></div><span id="configsaved" class="mb-toast">Сохранено</span>`;
+  settingsspan.innerHTML = `<style>#config{font:13px/1.5 ui-sans-serif,system-ui,sans-serif;color:#ddd;background:#0e0e0e;border-radius:8px;padding:0;position:relative}#config .mb-header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #2a2a2a}#config .mb-header img{width:32px;height:32px;border-radius:4px}#config .mb-header h2{margin:0;font-size:15px;font-weight:600}#config .mb-version{margin-left:auto;font-size:11px;color:#777}#config .mb-section{padding:12px 16px;border-bottom:1px solid #1f1f1f}#config .mb-section h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:600}#config .mb-row{display:flex;align-items:center;gap:10px;margin:6px 0}#config .mb-row label{flex:1;cursor:pointer}#config input[type="checkbox"]{width:16px;height:16px;cursor:pointer;accent-color:#5af}#config input[type="password"],#config input[type="text"],#config select{background:#1a1a1a;color:#eee;border:1px solid #333;border-radius:4px;padding:5px 8px;font-size:13px;outline:none}#config input:focus,#config select:focus{border-color:#5af}#config .mb-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#2a3a4f;color:#fff;border:1px solid #3a5070;border-radius:4px;cursor:pointer;font-size:13px}#config .mb-btn:hover{background:#3a5070}#config .mb-btn.primary{background:#2a5a3a;border-color:#3a703a}#config .mb-btn.primary:hover{background:#3a703a}#config .mb-tracked-list,#config .mb-networks-list{max-height:120px;overflow-y:auto;background:#161616;padding:6px;border:1px solid #2a2a2a;border-radius:4px;font-size:12px}#config .mb-tracked-item,#config .mb-network-item{display:flex;align-items:center;padding:4px 6px;border-radius:3px}#config .mb-tracked-item:hover,#config .mb-network-item:hover{background:#1f1f1f}#config .mb-remove{color:#f55;cursor:pointer;margin-left:auto;padding:0 6px}#config .mb-stats{font-size:11px;color:#888;margin-top:6px}#config .mb-toast{position:absolute;top:8px;right:8px;background:#2a5a3a;color:#fff;padding:6px 10px;border-radius:4px;font-size:12px;display:none;z-index:10}</style><div class="mb-header"><img src="https://raw.githubusercontent.com/asrdri/yt-metabot-user-js/master/logo.png"><h2>MetaBot · AI Bot Detection</h2><span class="mb-version">v${GM_info.script.version}</span></div><div class="mb-section"><h3>DeepSeek API</h3><div class="mb-row"><label for="deepseek_api_key">API Key:</label><input type="password" id="deepseek_api_key" placeholder="sk-..." style="width:280px"></div><div class="mb-row"><label><input type="checkbox" id="mbAutoClassify"> Авто-классификация для tracked-каналов</label></div><div class="mb-row"><label><input type="checkbox" id="mbAutoReportSpam"> Auto-report SPAM комменты в YouTube</label></div></div><div class="mb-section"><h3>Детекция ботов</h3><div style="font-size:11px;color:#888;margin-bottom:6px;line-height:1.5">DeepSeek AI + локальные эвристики (entropy, частота, кросс-канал) + публичные ресурсы:<br><a href="https://botnadzor.org" target="_blank" style="color:#6af">Ботнадзор</a> · <a href="https://euvsdisinfo.eu" target="_blank" style="color:#6af">EUvsDisinfo</a> · <a href="https://factcheck.by" target="_blank" style="color:#6af">Factcheck.BY</a> · <a href="https://dfrlab.org" target="_blank" style="color:#6af">DFRLab</a></div><div class="mb-row"><label>Действие при обнаружении:</label><select id="mbcddm1"><option value="1">Помечать</option><option value="2">Скрывать</option></select></div><div class="mb-row"><label><input type="checkbox" id="mbcbox1"> Авто-дизлайк ботам</label></div><div class="mb-row"><label><input type="checkbox" id="mbcbox2"> Скрывать длинные подписи Like/Dislike</label></div></div><div class="mb-section"><h3>Отслеживаемые каналы <span id="mbTrackedCount" style="font-weight:normal;color:#666"></span></h3><div class="mb-tracked-list" id="mbTrackedList"><div style="color:#666;font-style:italic;padding:8px;text-align:center">Нет отслеживаемых каналов.<br>Откройте видео и нажмите [👁 Отслеживать] под автором.</div></div></div><div class="mb-section"><h3>Известные ботосетки <span id="mbNetworksCount" style="font-weight:normal;color:#666"></span></h3><div class="mb-networks-list" id="mbNetworksList"><div style="color:#666;font-style:italic;padding:8px;text-align:center">Сетки не выявлены.<br>Нажмите [🕸 Кластеризовать] после анализа паттернов.</div></div></div><div class="mb-section"><h3>Действия</h3><div class="mb-row" style="flex-wrap:wrap;gap:6px"><button id="mbClassifyBtn" class="mb-btn primary">🤖 Классифицировать</button><button id="mbAnalyzePatternsBtn" class="mb-btn">🔍 Анализ паттернов</button><button id="mbClusterBtn" class="mb-btn">🕸 Кластеризовать</button></div><div class="mb-stats" id="mbStats">Каналов: 0 · Очередь: 0 · Комментариев: 0 · Сеток: 0</div></div><div class="mb-section" style="border-bottom:none;padding-top:8px"><div class="mb-row" style="font-size:11px;color:#666"><a id="urlgithub" data-url="https://github.com/asrdri/yt-metabot-user-js/" style="color:#6af;cursor:pointer">GitHub</a><span id="mbAboutBtn" style="cursor:pointer;color:#6af;margin:0 12px">ℹ️ О скрипте</span><span style="margin-left:auto"><span id="resetbtn" style="cursor:pointer;color:#a55">Сброс</span></span></div></div><span id="configsaved" class="mb-toast">Сохранено</span>`;
   settingsspan.id = 'config';
   settingsspan.classList.add("description");
   settingsspan.classList.add("content");
@@ -1670,6 +1759,7 @@ function insertannNew(jNode) {
   $(jNode).find("input#listcustom4").val(GM_config.get('listc4'));
   $(jNode).find("input#listcustom5").val(GM_config.get('listc5'));
   $(jNode).find("input#deepseek_api_key").val(GM_config.get('deepseek_api_key'));
+  $(jNode).find("input#mbAutoReportSpam").prop('checked', GM_config.get('mbAutoReportSpam'));
   $(jNode).find("input#colorpersonal").val(parseColor(GM_config.get('colorp1'), false));
   $(jNode).find("input#colorcustom1").val(parseColor(GM_config.get('colorc1'), false));
   $(jNode).find("input#colorcustom2").val(parseColor(GM_config.get('colorc2'), false));
@@ -1682,7 +1772,7 @@ function insertannNew(jNode) {
   if ($(jNode).find("input#mbcbox3").prop('checked') == false) {
     $(jNode).find("span#mbcswg2").hide();
   }
-  $(jNode).find("input#mbcbox1, input#mbcbox2, input#mbcbox3, select#mbcddm1, textarea#listpersonal, input#listcustom1, input#listcustom2, input#listcustom3, input#listcustom4, input#listcustom5, input#deepseek_api_key, input#colorpersonal, input#colorcustom1, input#colorcustom2, input#colorcustom3, input#colorcustom4, input#colorcustom5").change(function() {
+  $(jNode).find("input#mbcbox1, input#mbcbox2, input#mbcbox3, input#mbAutoReportSpam, select#mbcddm1, textarea#listpersonal, input#listcustom1, input#listcustom2, input#listcustom3, input#listcustom4, input#listcustom5, input#deepseek_api_key, input#colorpersonal, input#colorcustom1, input#colorcustom2, input#colorcustom3, input#colorcustom4, input#colorcustom5").change(function() {
     if ($(jNode).find("select#mbcddm1").val() == 2) {
       $(jNode).find("span#mbcswg1").hide();
     } else {
@@ -1844,6 +1934,7 @@ function saveconfigNew(jNode) {
   safeSet('listc4', 'input#listcustom4');
   safeSet('listc5', 'input#listcustom5');
   safeSet('deepseek_api_key', 'input#deepseek_api_key');
+  safeSet('mbAutoReportSpam', 'input#mbAutoReportSpam');
   safeSet('colorp1', 'input#colorpersonal', function(v){ return parseColor(v, true); });
   safeSet('colorc1', 'input#colorcustom1', function(v){ return parseColor(v, true); });
   safeSet('colorc2', 'input#colorcustom2', function(v){ return parseColor(v, true); });
@@ -1938,6 +2029,14 @@ async function parseitemNew(jNode) {
         isReply: !!jNode.closest('ytd-comment-replies-renderer')
       });
       var channel = await mbdb.getChannel(userID);
+      // Save displayName so showChannelHistory shows nickname not UC ID
+      try {
+        var authorEl = jNode.querySelector('#author-text');
+        var displayName = authorEl ? authorEl.textContent.trim() : null;
+        if (displayName && (!channel || !channel.displayName)) {
+          mbdb.upsertChannel({channelId: userID, displayName: displayName}).catch(function(){});
+        }
+      } catch (e) {}
       // ALWAYS apply badge — even for unknown channels show UNKNOWN/NEW_REG.
       // Previously only known channels got badges → lazy-loaded comments stayed untagged.
       var channelData = channel || { channelId: userID, label: null };
@@ -1948,19 +2047,37 @@ async function parseitemNew(jNode) {
           mbdb.getComments(userID, 10).then(function(allComments) {
             mbHeuristics.compute(channel, allComments).then(function(heur) {
               var now = Date.now();
-              if (heur.verdict) {
-                // T19 OPT-1: batch upsert — will merge with any pending writes for same channel
-                _mbIdbBatch.queueUpsert({
+              if (heur.verdict || (heur.verdict_labels && heur.verdict_labels.length > 0)) {
+                var upsertData = {
                   channelId: userID,
                   heuristic_label: heur.verdict,
+                  heuristic_labels: heur.verdict_labels || [],
                   heuristic_score: heur.score,
                   heuristic_signals: heur.signals,
                   heuristic_at: now
-                });
+                };
+                // T19 OPT-1: batch upsert — will merge with any pending writes for same channel
+                _mbIdbBatch.queueUpsert(upsertData);
                 // Re-read after flush (400ms) and update badge
                 setTimeout(function() {
                   mbdb.getChannel(userID).then(function(updated) {
-                    if (updated) applyBadge(jNode, updated);
+                    if (updated) {
+                      applyBadge(jNode, updated);
+                      // Auto-report SPAM via DOM if enabled
+                      try {
+                        if (updated.heuristic_labels && updated.heuristic_labels.indexOf('SPAM') >= 0) {
+                          var thread = (jNode instanceof Element ? jNode : (jNode[0] || jNode)).closest ? (jNode instanceof Element ? jNode : (jNode[0] || jNode)).closest('ytd-comment-thread-renderer') : null;
+                          if (thread && !thread.dataset.mbReported) {
+                            var autoReport = false;
+                            try { autoReport = GM_config.get('mbAutoReportSpam') === true; } catch (e) {}
+                            if (autoReport) {
+                              thread.dataset.mbReported = '1';
+                              setTimeout(function() { reportCommentAsSpam(thread); }, 1500 + Math.random() * 2000);
+                            }
+                          }
+                        }
+                      } catch (arErr) { console.warn('[MetaBot SPAM] auto-report check failed:', arErr.message); }
+                    }
                   }).catch(function(){});
                 }, 500);
               } else {
@@ -2260,8 +2377,20 @@ async function procdateNew(jNode, response, url) {
   }
 }
 
-var MB_COLORS = { BOT:'#e53935', NETWORK:'#8e24aa', NEW_REG:'#fb8c00', SUSPECT:'#fbc02d', HUMAN:'#43a047', UNKNOWN:'#757575' };
-var MB_BADGES = { BOT:'🤖 БОТ', NETWORK:'🕸 СЕТЬ', NEW_REG:'🆕 НОВОРЕГ', SUSPECT:'⚠️ ПОДОЗР', HUMAN:'✓ ЧЕЛОВЕК', UNKNOWN:'? UNK' };
+var MB_COLORS = {
+  BOT: '#e53935', NETWORK: '#8e24aa', NEW_REG: '#fb8c00', SUSPECT: '#fbc02d', HUMAN: '#43a047', UNKNOWN: '#757575',
+  VATNIK: '#8b4513',
+  PUTINIST: '#c41e3a',
+  SOVOK: '#cd5c5c',
+  SPAM: '#d4af00'
+};
+var MB_BADGES = {
+  BOT: '🤖 БОТ', NETWORK: '🕸 СЕТЬ', NEW_REG: '🆕 НОВОРЕГ', SUSPECT: '⚠️ ПОДОЗР', HUMAN: '✓ ЧЕЛОВЕК', UNKNOWN: '? UNK',
+  VATNIK: '🪖 ВАТНИК',
+  PUTINIST: '🇷🇺 ПУТИНИСТ',
+  SOVOK: '☭ СОВОК',
+  SPAM: '🚫 СПАМ'
+};
 
 function getVideoPublishDate() {
   if (window._mbCurrentVideoPublishDate) return window._mbCurrentVideoPublishDate;
@@ -2302,7 +2431,8 @@ function applyBadge(jNode, channel) {
     var root = jNode instanceof Element ? jNode : (jNode[0] || jNode);
     if (!root || !root.querySelector) return;
     // Skip re-render if badge state hasn't changed
-    var sig = (channel.user_label||'') + '|' + (channel.heuristic_label||'') + '|' + (channel.label||'') + '|' + (channel.network_cluster_id||'') + '|' + (channel.joinDate||'');
+    var userLabelsKey = (channel.user_labels || (channel.user_label ? [channel.user_label] : [])).join(',');
+    var sig = userLabelsKey + '|' + (channel.heuristic_label||'') + '|' + (Array.isArray(channel.heuristic_labels) ? channel.heuristic_labels.join(',') : '') + '|' + (channel.label||'') + '|' + (channel.network_cluster_id||'') + '|' + (channel.joinDate||'');
     if (root._mbBadgeSig === sig) return;
     root._mbBadgeSig = sig;
     var author = root.querySelector('#author-text');
@@ -2310,11 +2440,17 @@ function applyBadge(jNode, channel) {
     var oldBadge = author.parentNode.querySelector('.mb-ai-badge');
     if (oldBadge) oldBadge.remove();
     var thread = root.closest ? root.closest('ytd-comment-thread-renderer') : null;
-    // Compute states — user_label has TOP priority (manual override)
+    // Compute states — user_labels has TOP priority (manual override), backward-compat with user_label
     var states = [];
-    if (channel.user_label) {
-      states.push(channel.user_label);
+    var userLabels = channel.user_labels || (channel.user_label ? [channel.user_label] : []);
+    if (userLabels.length > 0) {
+      // Manual override(s) win
+      for (var ul = 0; ul < userLabels.length; ul++) states.push(userLabels[ul]);
+    } else if (channel.heuristic_labels && channel.heuristic_labels.length > 0 && !channel.label) {
+      // Heuristic verdict (multi)
+      for (var hl = 0; hl < channel.heuristic_labels.length; hl++) states.push(channel.heuristic_labels[hl]);
     } else if (channel.heuristic_label && !channel.label) {
+      // Legacy single heuristic_label
       if (channel.heuristic_label === 'BOT_HEURISTIC') states.push('BOT');
       else if (channel.heuristic_label === 'SUSPECT_HEURISTIC') states.push('SUSPECT');
       else if (channel.heuristic_label === 'HUMAN_HEURISTIC') states.push('HUMAN');
@@ -2346,14 +2482,15 @@ function applyBadge(jNode, channel) {
       pill.textContent = MB_BADGES[state];
       container.appendChild(pill);
     });
-    if (channel.user_label) {
+    var _hasUserLabels = (channel.user_labels && channel.user_labels.length > 0) || !!channel.user_label;
+    if (_hasUserLabels) {
       var userMark = document.createElement('span');
       userMark.textContent = '👤';
-      userMark.title = 'Установлено вручную ' + new Date(channel.user_label_at).toLocaleString();
+      userMark.title = 'Установлено вручную ' + (channel.user_label_at ? new Date(channel.user_label_at).toLocaleString() : '');
       userMark.style.cssText = 'margin-left:4px;font-size:10px;opacity:0.7';
       container.appendChild(userMark);
     }
-    if (channel.heuristic_label && !channel.label && !channel.user_label) {
+    if ((channel.heuristic_label || (channel.heuristic_labels && channel.heuristic_labels.length > 0)) && !channel.label && !_hasUserLabels) {
       var heurMark = document.createElement('span');
       heurMark.textContent = '🧮';
       heurMark.title = 'Локальная эвристика (без AI): score ' + (channel.heuristic_score || 0);
@@ -2395,8 +2532,9 @@ function applyBadge(jNode, channel) {
 
       function buildExplanation(state, ch) {
         var parts = [];
-        if (ch.user_label) {
-          parts.unshift('Установлено вручную (' + new Date(ch.user_label_at).toLocaleString() + ')');
+        var _chUserLabels = ch.user_labels || (ch.user_label ? [ch.user_label] : []);
+        if (_chUserLabels.length > 0) {
+          parts.unshift('Установлено вручную (' + (_chUserLabels.join(', ')) + (ch.user_label_at ? ' · ' + new Date(ch.user_label_at).toLocaleString() : '') + ')');
         }
         if (state === 'BOT') {
           if (ch.reasoning) parts.push('AI: ' + ch.reasoning);
@@ -2454,37 +2592,44 @@ function applyBadge(jNode, channel) {
         var btnBar = document.createElement('div');
         btnBar.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid #333;display:flex;flex-wrap:wrap;gap:4px;align-items:center';
         var labelEl = document.createElement('div');
-        labelEl.textContent = 'Установить статус вручную:';
+        labelEl.textContent = 'Статусы (можно несколько):';
         labelEl.style.cssText = 'width:100%;font-size:11px;color:#888;margin-bottom:4px';
         btnBar.appendChild(labelEl);
         var overrideLabels = [
           ['BOT', '🤖 БОТ'],
+          ['SPAM', '🚫 СПАМ'],
+          ['VATNIK', '🪖 ВАТНИК'],
+          ['PUTINIST', '🇷🇺 ПУТИНИСТ'],
+          ['SOVOK', '☭ СОВОК'],
           ['NETWORK', '🕸 СЕТЬ'],
           ['NEW_REG', '🆕 НОВОРЕГ'],
           ['SUSPECT', '⚠️ ПОДОЗР'],
           ['HUMAN', '✓ ЧЕЛОВЕК'],
           ['UNKNOWN', '? UNK']
         ];
+        var currentUserLabels = capturedChannel.user_labels || (capturedChannel.user_label ? [capturedChannel.user_label] : []);
         overrideLabels.forEach(function(pair) {
           var key = pair[0], txt = pair[1];
+          var isActive = currentUserLabels.indexOf(key) >= 0;
           var b = document.createElement('button');
-          b.textContent = txt;
-          b.style.cssText = 'background:' + MB_COLORS[key] + '22;color:' + MB_COLORS[key] + ';border:1px solid ' + MB_COLORS[key] + '55;border-radius:8px;padding:3px 8px;font-size:11px;cursor:pointer';
+          b.textContent = (isActive ? '✓ ' : '') + txt;
+          b.style.cssText = 'background:' + MB_COLORS[key] + (isActive ? 'aa' : '22') + ';color:' + MB_COLORS[key] + ';border:1px solid ' + MB_COLORS[key] + (isActive ? 'cc' : '55') + ';border-radius:8px;padding:3px 8px;font-size:11px;cursor:pointer';
           b.onclick = async function(ev) {
             ev.stopPropagation();
             try {
-              await mbdb.setUserLabel(capturedChannel.channelId, key);
-              if (typeof showToast === 'function') showToast('Статус: ' + txt);
+              await mbdb.setUserLabel(capturedChannel.channelId, key, true); // toggle=true
+              if (typeof showToast === 'function') showToast('Toggle: ' + txt);
               if (typeof refreshBadgesForChannel === 'function') await refreshBadgesForChannel(capturedChannel.channelId);
               var pop = document.getElementById('mbReasonPopover');
               if (pop) pop.remove();
-            } catch (e) { console.warn('[MetaBot] setUserLabel failed:', e.message); }
+            } catch (e) { console.warn('[MetaBot] toggleUserLabel failed:', e.message); }
           };
           btnBar.appendChild(b);
         });
-        if (capturedChannel.user_label) {
+        var _hasAnyUserLabel = currentUserLabels.length > 0;
+        if (_hasAnyUserLabel) {
           var reset = document.createElement('button');
-          reset.textContent = '↻ Сбросить override';
+          reset.textContent = '↻ Сбросить все';
           reset.style.cssText = 'background:transparent;color:#888;border:1px dashed #444;border-radius:8px;padding:3px 8px;font-size:11px;cursor:pointer;margin-left:8px';
           reset.onclick = async function(ev) {
             ev.stopPropagation();
@@ -2534,7 +2679,77 @@ function applyBadge(jNode, channel) {
       thread.style.borderLeft = '3px solid ' + MB_COLORS[primary];
       thread.style.paddingLeft = '8px';
     }
+    // Auto-report SPAM: если states содержит SPAM и включен GM_config.mbAutoReportSpam
+    if (states.indexOf('SPAM') >= 0 && thread && !thread.dataset.mbReported) {
+      var _autoRep = false;
+      try { _autoRep = GM_config.get('mbAutoReportSpam') === true; } catch (e) {}
+      if (_autoRep) {
+        thread.dataset.mbReported = '1';
+        setTimeout(function() { reportCommentAsSpam(thread); }, 1500 + Math.random() * 2000);
+      }
+    }
   } catch (e) { console.warn('[MetaBot] applyBadge failed:', e.message); }
+}
+
+// T21: DOM-automation spam reporter — clicks ⋮ → Report → Spam → Submit
+async function reportCommentAsSpam(threadNode) {
+  try {
+    if (!threadNode) return false;
+    // Step 1: find action menu trigger (3-dot button)
+    var menuBtn = threadNode.querySelector('ytd-menu-renderer button#button, #action-menu yt-icon-button, ytd-menu-renderer #action-menu, button[aria-label*="More"], button[aria-label*="Ещё"]');
+    if (!menuBtn) {
+      console.warn('[MetaBot SPAM] menu button not found');
+      return false;
+    }
+    menuBtn.click();
+    await new Promise(function(r){ setTimeout(r, 500); });
+
+    // Step 2: find "Report" option in opened menu
+    var reportItem = null;
+    var menuItems = document.querySelectorAll('tp-yt-paper-listbox tp-yt-paper-item, ytd-menu-popup-renderer ytd-menu-service-item-renderer');
+    for (var i = 0; i < menuItems.length; i++) {
+      var t = menuItems[i].textContent.trim().toLowerCase();
+      if (/report|пожаловаться|жалоба/i.test(t)) { reportItem = menuItems[i]; break; }
+    }
+    if (!reportItem) {
+      console.warn('[MetaBot SPAM] report option not found');
+      return false;
+    }
+    reportItem.click();
+    await new Promise(function(r){ setTimeout(r, 800); });
+
+    // Step 3: select "Spam or misleading" radio
+    var spamRadio = null;
+    var radios = document.querySelectorAll('tp-yt-paper-radio-button, yt-radio-button-renderer, [role="radio"]');
+    for (var j = 0; j < radios.length; j++) {
+      var rt = radios[j].textContent.trim().toLowerCase();
+      if (/spam|спам|обманн|misleading|вводящ/i.test(rt)) { spamRadio = radios[j]; break; }
+    }
+    if (!spamRadio) {
+      console.warn('[MetaBot SPAM] spam radio not found, closing dialog');
+      document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+      return false;
+    }
+    spamRadio.click();
+    await new Promise(function(r){ setTimeout(r, 300); });
+
+    // Step 4: click submit button
+    var submitBtn = null;
+    var buttons = document.querySelectorAll('yt-button-renderer button, tp-yt-paper-button');
+    for (var k = 0; k < buttons.length; k++) {
+      var bt = buttons[k].textContent.trim().toLowerCase();
+      if (/report|пожаловаться|отправить|submit/i.test(bt)) { submitBtn = buttons[k]; break; }
+    }
+    if (submitBtn) {
+      submitBtn.click();
+      console.log('[MetaBot SPAM] reported via DOM automation');
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.warn('[MetaBot SPAM] report failed:', e.message);
+    return false;
+  }
 }
 
 // T20: full-screen overlay with all comments for a given channelId
@@ -2579,14 +2794,20 @@ async function showChannelHistory(channelId) {
     var peakDayIdx = days.indexOf(Math.max.apply(null, days));
     var dayNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
-    var primaryState = channel.user_label || (channel.heuristic_label && !channel.label ? channel.heuristic_label.replace('_HEURISTIC', '') : channel.label) || 'UNKNOWN';
+    var _histUserLabels = channel.user_labels || (channel.user_label ? [channel.user_label] : []);
+    var _histHeurLabels = channel.heuristic_labels || (channel.heuristic_label ? [channel.heuristic_label.replace('_HEURISTIC', '')] : []);
+    var primaryState = (_histUserLabels[0]) || (!channel.label && _histHeurLabels[0]) || channel.label || 'UNKNOWN';
     var primColor = (typeof MB_COLORS !== 'undefined' && MB_COLORS[primaryState]) || '#888';
 
-    // Status badge HTML
+    // Status badge HTML — show all active labels
     var statusBadgeHtml = '';
-    if (channel.label) statusBadgeHtml += '<span style="background:' + primColor + '22;color:' + primColor + ';padding:3px 10px;border-radius:12px;border:1px solid ' + primColor + '55;font-weight:600">' + (MB_BADGES[primaryState] || primaryState) + '</span>';
-    if (channel.user_label) statusBadgeHtml += ' <span style="font-size:10px;opacity:0.7">👤 override</span>';
-    if (channel.heuristic_label && !channel.label) statusBadgeHtml += ' <span style="font-size:10px;opacity:0.7">🧮 эвристика</span>';
+    var _allHistLabels = _histUserLabels.length > 0 ? _histUserLabels : (!channel.label && _histHeurLabels.length > 0 ? _histHeurLabels : (channel.label ? [channel.label] : ['UNKNOWN']));
+    _allHistLabels.forEach(function(lbl) {
+      var lColor = (typeof MB_COLORS !== 'undefined' && MB_COLORS[lbl]) || primColor;
+      statusBadgeHtml += '<span style="background:' + lColor + '22;color:' + lColor + ';padding:3px 10px;border-radius:12px;border:1px solid ' + lColor + '55;font-weight:600;margin-right:4px">' + (MB_BADGES[lbl] || lbl) + '</span>';
+    });
+    if (_histUserLabels.length > 0) statusBadgeHtml += ' <span style="font-size:10px;opacity:0.7">👤 override</span>';
+    if (_histHeurLabels.length > 0 && !channel.label && _histUserLabels.length === 0) statusBadgeHtml += ' <span style="font-size:10px;opacity:0.7">🧮 эвристика</span>';
     if (channel.confidence) statusBadgeHtml += ' <span style="font-size:11px;color:#888">· ' + Math.round(channel.confidence * 100) + '%</span>';
 
     // Comments grouped by videoId
@@ -2629,7 +2850,10 @@ async function showChannelHistory(channelId) {
       '<span style="position:absolute;top:8px;right:14px;cursor:pointer;font-size:24px;color:#888;line-height:1" id="mbChHistClose">×</span>' +
       // Header
       '<div style="padding:16px 20px;border-bottom:1px solid #2a2a2a;flex-shrink:0">' +
-        '<h2 style="margin:0 0 6px;font-size:16px;color:#fff;word-break:break-all">' + (channel.displayName || channel.handle || channelId) + '</h2>' +
+        '<h2 style="margin:0 0 6px;font-size:16px;color:#fff;word-break:break-all">' +
+          (channel.displayName || channel.handle || ('@' + channelId.slice(0, 20))) +
+        '</h2>' +
+        '<div style="font-size:10px;color:#666;font-family:monospace;margin-bottom:4px">' + channelId + '</div>' +
         '<div style="display:flex;gap:8px;align-items:center;font-size:11px;color:#888;flex-wrap:wrap">' +
           '<a href="https://www.youtube.com/channel/' + channelId + '" target="_blank" style="color:#6af">→ канал на YouTube</a>' +
           (channel.joinDate ? ' · 📅 Зарегистрирован ' + channel.joinDate : '') +
