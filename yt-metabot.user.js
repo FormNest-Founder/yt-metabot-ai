@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230800
+// @version      230801
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -772,22 +772,32 @@ var RU_SOVOK_LEXICON = [
   /\bбыли (же )?рабоч\w+ места/i
 ];
 
-// SPAM patterns — adult ads, scam links, obfuscated commercial spam
+// SPAM — commercial/scam phrase patterns (stable categories only).
+// NOTE: throwaway-nick lures (зайки/девочки/тех самых) are NOT listed here —
+// those nicks rotate constantly. The stable signal is the disposable spam DOMAIN
+// (see SPAM_TLD / detectSpamDomain) and mixed-alphabet obfuscation.
 var RU_SPAM_LEXICON = [
-  /\bтех самых\b/i,
-  /\bгодик[ао]в\b/i,
-  /\b3axod|зax[оo]d|зaxoд|3axoдитe\b/i,
-  /\bзайки?\s*[🌼🌸🌷🌹🌺]/i,
-  /\bдевочки?\s*[🌼🌸🌷🌹🌺]/i,
-  /[🌼🌸🌷🌹🌺]\s*тех\s*самых\s*[🌼🌸🌷🌹🌺]/i,
   /\b(гипноз|порча|приворот|маг|астролог|таро)\s+(онлайн|поможет|снят)/i,
   /\bзаработ(а|о)к\s+(онлайн|на телефоне|без вложений)/i,
   /\bкупит[ье]?\s+(подписчик|просмотр|лайк)/i,
   /\bнакрутк[ау]\b/i,
-  /\bкриптовалют\w+\s+(заработок|стратеги)/i,
-  /\bsesa\.pw|sесa\.рw/i,
-  /\b[a-zA-Z]{2,3}[.0-9_]+[аеоруАЕОРУ]+/
+  /\bкриптовалют\w+\s+(заработок|стратеги)/i
 ];
+
+// Disposable / abuse-prone TLDs — cheap or free zones scammers register en masse.
+// Stable signal: a domain on one of these zones is almost always throwaway spam.
+var SPAM_TLD = new Set([
+  'pw','xyz','top','click','site','club','online','cyou','fun','icu','cfd',
+  'sbs','lol','bond','quest','rest','autos','beauty','hair','mom','skin',
+  'monster','cam','live','life','shop','store','space','website','win','men',
+  'date','download','stream','racing','review','science','party','gdn','work',
+  'buzz','press','wiki','link','one','vip','cc','tk','ml','ga','cf','su'
+]);
+// Legit mainstream zones — never flagged on TLD alone.
+var MAINSTREAM_TLD = new Set([
+  'com','ru','org','net','io','me','tv','dev','app','edu','gov','int',
+  'co','uk','de','fr','ua','by','kz','pl','it','es','nl','jp','cn','info','biz'
+]);
 
 var RU_GENERIC_PATTERNS = [
   /^(молодец[!.,]?\s*)+$/i,
@@ -840,8 +850,87 @@ mbHeuristics.hasRuBotLexicon = function(text) {
   return count;
 };
 
+// T21.1 — detect disposable spam domains. Returns a weight (0 = none).
+// Scammers rotate nicks but always plant a throwaway domain. The domain is the
+// stable signal: a cheap/free TLD, or ANY domain embedded inside a username/handle.
+// `inHandle` raises the weight because a domain inside a nickname is itself anomalous.
+mbHeuristics.detectSpamDomain = function(str, inHandle) {
+  if (!str) return { weight: 0, hits: [] };
+  var hits = [];
+  var weight = 0;
+  // Match domain-like tokens incl. obfuscated separators: word . tld  /  word [dot] tld
+  // TLD terminates on anything that is not a letter/digit (underscore, space, end, punct)
+  // — note \b fails before "_" since "_" is a word char (e.g. WEHA.PW_DEBOCHKU).
+  var re = /([a-z0-9][a-z0-9-]{1,30})\s*(?:\.|\[\s*dot\s*\]|\(\s*dot\s*\)|\s+dot\s+)\s*([a-z]{2,10})(?![a-z0-9])/gi;
+  var m;
+  while ((m = re.exec(str)) !== null) {
+    var tld = m[2].toLowerCase();
+    var domain = (m[1] + '.' + tld).toLowerCase();
+    if (SPAM_TLD.has(tld)) {
+      weight += inHandle ? 70 : 50;            // known disposable zone — strong
+      hits.push(domain);
+    } else if (!MAINSTREAM_TLD.has(tld)) {
+      weight += inHandle ? 45 : 25;            // unknown/non-mainstream zone — suspicious
+      hits.push(domain);
+    } else if (inHandle) {
+      weight += 35;                            // even a .com inside a NICKNAME is abnormal
+      hits.push(domain);
+    }
+  }
+  return { weight: weight, hits: hits };
+};
+
+// T21.1 — count words mixing Latin + Cyrillic glyphs (PEAЛbHO, ГOЛblE, B MOEM HUKE).
+// Legit users almost never do this; it is the classic CAPTCHA-evasion obfuscation.
+mbHeuristics.hasMixedAlphabetWord = function(text) {
+  if (!text) return 0;
+  var words = text.split(/\s+/);
+  var mixed = 0;
+  for (var i = 0; i < words.length; i++) {
+    var w = words[i].replace(/[^A-Za-zА-Яа-яЁё]/g, '');
+    if (w.length < 3) continue;
+    if (/[A-Za-z]/.test(w) && /[А-Яа-яЁё]/.test(w)) mixed++;
+  }
+  return mixed;
+};
+
+// T21.1 — fast SPAM verdict for a channel + its (few) comments. Used both in the
+// early fast-path (single-comment spammers) and the full compute pass.
+// Returns { isSpam, score, signals } — pure, no side effects.
+mbHeuristics.quickSpamCheck = function(channel, comments) {
+  var signals = [];
+  var score = 0;
+  var handleStr = ((channel && channel.handle) || '') + ' ' + ((channel && channel.name) || '');
+  var dh = mbHeuristics.detectSpamDomain(handleStr, true);
+  if (dh.weight > 0) { score += dh.weight; signals.push('SPAM:domain_in_handle=' + dh.hits.join(',')); }
+  for (var i = 0; i < (comments || []).length; i++) {
+    var txt = comments[i].text || '';
+    var dc = mbHeuristics.detectSpamDomain(txt, false);
+    if (dc.weight > 0) { score += dc.weight; signals.push('SPAM:domain_in_text=' + dc.hits.join(',')); }
+    var mixed = mbHeuristics.hasMixedAlphabetWord(txt);
+    if (mixed >= 2) { score += 40; signals.push('SPAM:mixed_alphabet=' + mixed); }
+    for (var s = 0; s < RU_SPAM_LEXICON.length; s++) {
+      if (RU_SPAM_LEXICON[s].test(txt)) { score += 30; signals.push('SPAM:scam_phrase'); break; }
+    }
+  }
+  return { isSpam: score >= 40, score: score, signals: signals };
+};
+
 mbHeuristics.compute = async function(channel, comments) {
   comments = comments || [];
+  // T21.1 — SPAM quick-check runs FIRST, before any fast-path bail-out.
+  // Disposable-domain spammers usually have a single comment and no joinDate,
+  // so they must be caught here or they slip through the <3-comment fast path.
+  var qs = mbHeuristics.quickSpamCheck(channel, comments);
+  if (qs.isSpam) {
+    return {
+      score: Math.min(qs.score, 100),
+      signals: qs.signals,
+      dataPoints: qs.signals.length,
+      verdict: 'SPAM_HEURISTIC',
+      verdict_labels: ['SPAM']
+    };
+  }
   // Fast path: no data at all — skip full computation
   if (!channel.joinDate && comments.length < 3) {
     return { score: 0, signals: [], dataPoints: 0, verdict: null };
@@ -950,6 +1039,9 @@ mbHeuristics.compute = async function(channel, comments) {
     for (var si = 0; si < RU_SOVOK_LEXICON.length; si++) if (RU_SOVOK_LEXICON[si].test(txt)) { sovokHits++; break; }
     for (var spi = 0; spi < RU_SPAM_LEXICON.length; spi++) if (RU_SPAM_LEXICON[spi].test(txt)) { spamHits++; break; }
   }
+  // T21.1 — domain & mixed-alphabet SPAM signals (stable across nick rotation)
+  var qsFull = mbHeuristics.quickSpamCheck(channel, comments);
+  if (qsFull.score >= 30) { spamHits++; for (var qi = 0; qi < qsFull.signals.length; qi++) signals.push(qsFull.signals[qi]); }
 
   var extraLabels = [];
   if (vatnikHits >= 2) { signals.push('VATNIK:hits=' + vatnikHits); score += vatnikHits >= 4 ? 35 : 20; dataPoints++; extraLabels.push('VATNIK'); }
