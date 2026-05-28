@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230700
+// @version      230701
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -2513,6 +2513,18 @@ function applyBadge(jNode, channel) {
         }, 200);
       };
       container.appendChild(info);
+
+      // T20: history button — show all comments for this channel
+      var hist = document.createElement('span');
+      hist.textContent = '📋';
+      hist.title = 'Показать все комментарии этого канала';
+      hist.style.cssText = 'margin-left:4px;color:#888;cursor:pointer;font-size:11px';
+      hist.onclick = function(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        showChannelHistory(capturedChannel.channelId);
+      };
+      container.appendChild(hist);
     })(channel, states, primary);
 
     // T19 OPT-5: finalize DocumentFragment — single DOM insertion (no intermediate reflow)
@@ -2523,6 +2535,147 @@ function applyBadge(jNode, channel) {
       thread.style.paddingLeft = '8px';
     }
   } catch (e) { console.warn('[MetaBot] applyBadge failed:', e.message); }
+}
+
+// T20: full-screen overlay with all comments for a given channelId
+async function showChannelHistory(channelId) {
+  try {
+    var existing = document.getElementById('mbChannelHistoryOverlay');
+    if (existing) existing.remove();
+
+    var channel = await mbdb.getChannel(channelId);
+    if (!channel) { if (typeof showToast === 'function') showToast('Канал не в базе'); return; }
+
+    var comments = await mbdb.getComments(channelId, 999);
+    comments.sort(function(a, b) { return (b.timestamp || 0) - (a.timestamp || 0); });
+
+    // Compute stats
+    var videoIds = {};
+    var hours = new Array(24).fill(0);
+    var days = new Array(7).fill(0);
+    var totalLen = 0;
+    for (var i = 0; i < comments.length; i++) {
+      var c = comments[i];
+      if (c.videoId) videoIds[c.videoId] = (videoIds[c.videoId] || 0) + 1;
+      if (c.timestamp) {
+        var d = new Date(c.timestamp);
+        var mskHour = (d.getUTCHours() + 3) % 24;
+        hours[mskHour]++;
+        days[d.getUTCDay()]++;
+      }
+      if (c.text) totalLen += c.text.length;
+    }
+    var avgLen = comments.length > 0 ? Math.round(totalLen / comments.length) : 0;
+    var uniqueVideos = Object.keys(videoIds).length;
+    var topVideos = Object.entries(videoIds).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 5);
+    var peakHour = hours.indexOf(Math.max.apply(null, hours));
+    var peakDayIdx = days.indexOf(Math.max.apply(null, days));
+    var dayNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+
+    var primaryState = channel.user_label || (channel.heuristic_label && !channel.label ? channel.heuristic_label.replace('_HEURISTIC', '') : channel.label) || 'UNKNOWN';
+    var primColor = (typeof MB_COLORS !== 'undefined' && MB_COLORS[primaryState]) || '#888';
+
+    // Status badge HTML
+    var statusBadgeHtml = '';
+    if (channel.label) statusBadgeHtml += '<span style="background:' + primColor + '22;color:' + primColor + ';padding:3px 10px;border-radius:12px;border:1px solid ' + primColor + '55;font-weight:600">' + (MB_BADGES[primaryState] || primaryState) + '</span>';
+    if (channel.user_label) statusBadgeHtml += ' <span style="font-size:10px;opacity:0.7">👤 override</span>';
+    if (channel.heuristic_label && !channel.label) statusBadgeHtml += ' <span style="font-size:10px;opacity:0.7">🧮 эвристика</span>';
+    if (channel.confidence) statusBadgeHtml += ' <span style="font-size:11px;color:#888">· ' + Math.round(channel.confidence * 100) + '%</span>';
+
+    // Comments grouped by videoId
+    var commentsHtml = '';
+    if (comments.length === 0) {
+      commentsHtml = '<div style="text-align:center;padding:24px;color:#666;font-style:italic">Нет сохранённых комментариев в базе</div>';
+    } else {
+      var grouped = {};
+      comments.forEach(function(c) {
+        var v = c.videoId || 'unknown';
+        if (!grouped[v]) grouped[v] = [];
+        grouped[v].push(c);
+      });
+      Object.entries(grouped).sort(function(a, b) { return b[1].length - a[1].length; }).forEach(function(entry) {
+        var vid = entry[0];
+        var vidComments = entry[1];
+        commentsHtml += '<div style="margin-bottom:14px;padding:10px;background:#181818;border-radius:6px;border-left:3px solid ' + primColor + '">';
+        if (vid !== 'unknown') {
+          commentsHtml += '<a href="https://www.youtube.com/watch?v=' + vid + '" target="_blank" style="color:#6af;font-weight:600;font-size:13px;display:block;margin-bottom:6px;text-decoration:none">▶ youtube.com/watch?v=' + vid + ' <span style="color:#888;font-weight:normal">(' + vidComments.length + ' комм.)</span></a>';
+        }
+        vidComments.forEach(function(c) {
+          var time = c.timestamp ? new Date(c.timestamp).toLocaleString('ru-RU') : 'без даты';
+          var txt = (c.text || '').slice(0, 500).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          if ((c.text || '').length > 500) txt += '...';
+          commentsHtml += '<div style="padding:6px 0;border-top:1px solid #2a2a2a">' +
+            '<div style="font-size:11px;color:#888;margin-bottom:3px">' + time + (c.isReply ? ' · ответ' : '') + '</div>' +
+            '<div style="color:#ddd;white-space:pre-wrap;word-wrap:break-word">' + (txt || '<em style="color:#555">[пустой комментарий]</em>') + '</div>' +
+            '</div>';
+        });
+        commentsHtml += '</div>';
+      });
+    }
+
+    var overlay = document.createElement('div');
+    overlay.id = 'mbChannelHistoryOverlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:99999;display:flex;align-items:center;justify-content:center;font:13px/1.5 ui-sans-serif,system-ui,sans-serif;color:#ddd';
+
+    overlay.innerHTML =
+      '<div style="background:#0e0e0e;border:1px solid #2a2a2a;border-radius:8px;padding:0;width:90vw;max-width:840px;max-height:90vh;display:flex;flex-direction:column;position:relative">' +
+      '<span style="position:absolute;top:8px;right:14px;cursor:pointer;font-size:24px;color:#888;line-height:1" id="mbChHistClose">×</span>' +
+      // Header
+      '<div style="padding:16px 20px;border-bottom:1px solid #2a2a2a;flex-shrink:0">' +
+        '<h2 style="margin:0 0 6px;font-size:16px;color:#fff;word-break:break-all">' + (channel.displayName || channel.handle || channelId) + '</h2>' +
+        '<div style="display:flex;gap:8px;align-items:center;font-size:11px;color:#888;flex-wrap:wrap">' +
+          '<a href="https://www.youtube.com/channel/' + channelId + '" target="_blank" style="color:#6af">→ канал на YouTube</a>' +
+          (channel.joinDate ? ' · 📅 Зарегистрирован ' + channel.joinDate : '') +
+          (channel.subscriberCount ? ' · 👥 ' + channel.subscriberCount.toLocaleString('ru-RU') + ' подписчиков' : '') +
+          (channel.videoCount ? ' · 🎬 ' + channel.videoCount + ' видео' : '') +
+        '</div>' +
+        '<div style="margin-top:8px">' + statusBadgeHtml + '</div>' +
+        (channel.reasoning ? '<div style="margin-top:6px;font-size:12px;color:#aaa">💭 ' + channel.reasoning + '</div>' : '') +
+        (channel.analysisSummary ? '<div style="margin-top:6px;font-size:12px;color:#aaa">📊 ' + channel.analysisSummary + '</div>' : '') +
+      '</div>' +
+      // Stats
+      '<div style="padding:12px 20px;border-bottom:1px solid #1f1f1f;flex-shrink:0">' +
+        '<h3 style="margin:0 0 8px;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:1px">📊 Статистика</h3>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;font-size:12px">' +
+          '<div><span style="color:#888">Всего комментов:</span> <b style="color:#fff">' + comments.length + '</b></div>' +
+          '<div><span style="color:#888">Уникальных видео:</span> <b style="color:#fff">' + uniqueVideos + '</b></div>' +
+          '<div><span style="color:#888">Средн. длина:</span> <b style="color:#fff">' + avgLen + ' симв.</b></div>' +
+          '<div><span style="color:#888">Пик день:</span> <b style="color:#fff">' + dayNames[peakDayIdx] + '</b></div>' +
+          '<div><span style="color:#888">Пик час (МСК):</span> <b style="color:#fff">' + (peakHour < 10 ? '0' + peakHour : peakHour) + ':00</b></div>' +
+          (channel.network_cluster_id ? '<div><span style="color:#888">Кластер:</span> <b style="color:#fff">' + channel.network_cluster_id + '</b></div>' : '') +
+        '</div>' +
+        (topVideos.length > 0 ? '<div style="margin-top:8px;font-size:11px;color:#888">Топ-видео по активности: ' + topVideos.map(function(v) { return '<a href="https://www.youtube.com/watch?v=' + v[0] + '" target="_blank" style="color:#6af">' + v[0].slice(0, 8) + '…</a>(' + v[1] + ')'; }).join(' · ') + '</div>' : '') +
+      '</div>' +
+      // Network signals
+      (channel.network_signals ? '<div style="padding:12px 20px;border-bottom:1px solid #1f1f1f;flex-shrink:0">' +
+        '<h3 style="margin:0 0 8px;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:1px">🕸 Network signals</h3>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:4px;font-size:11px">' +
+          Object.entries(channel.network_signals).map(function(kv) {
+            var val = kv[1] || 0;
+            var color = val > 70 ? '#e53935' : (val > 40 ? '#fb8c00' : '#43a047');
+            return '<div><span style="color:#888">' + kv[0] + ':</span> <b style="color:' + color + '">' + val + '</b></div>';
+          }).join('') +
+        '</div>' +
+      '</div>' : '') +
+      // Heuristic signals
+      (channel.heuristic_signals && channel.heuristic_signals.length > 0 ? '<div style="padding:12px 20px;border-bottom:1px solid #1f1f1f;flex-shrink:0">' +
+        '<h3 style="margin:0 0 8px;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:1px">🧮 Эвристика (score ' + (channel.heuristic_score || 0) + ')</h3>' +
+        '<div style="font-size:11px;color:#aaa">' + channel.heuristic_signals.join(' · ') + '</div>' +
+      '</div>' : '') +
+      // Comments list — scrollable
+      '<div style="padding:12px 20px;overflow-y:auto;flex:1">' +
+        '<h3 style="margin:0 0 10px;font-size:11px;text-transform:uppercase;color:#888;letter-spacing:1px">💬 Комментарии (' + comments.length + ')</h3>' +
+        commentsHtml +
+      '</div>' +
+      '</div>';
+
+    document.body.appendChild(overlay);
+    var closeIt = function() { overlay.remove(); document.removeEventListener('keydown', escHandler); };
+    overlay.querySelector('#mbChHistClose').onclick = closeIt;
+    overlay.onclick = function(ev) { if (ev.target === overlay) closeIt(); };
+    var escHandler = function(ev) { if (ev.key === 'Escape') closeIt(); };
+    document.addEventListener('keydown', escHandler);
+  } catch (e) { console.warn('[MetaBot] showChannelHistory failed:', e.message); }
 }
 
 async function refreshBadgesForChannel(channelId) {
