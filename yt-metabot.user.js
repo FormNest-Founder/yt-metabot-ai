@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230801
+// @version      230802
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -1937,6 +1937,38 @@ function insertannNew(jNode) {
         '<li>Кластеризация ботосеток: Euclidean distance + union-find по signals</li>' +
         '<li>Кросс-канальное отслеживание: что комментирует на нескольких каналах</li>' +
       '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🧮 Эвристика (локально, без AI)</h3>' +
+      '<p style="color:#aaa;font-size:12px;margin:0 0 6px;line-height:1.5">Канал набирает <b>score 0-100</b> по независимым сигналам. <b>Бот</b>: score≥80 И ≥2 сигнала. <b>Подозрительный</b>: ≥40. <b>Человек</b>: 0 сигналов при ≥10 комментах. Приоритет — точность: лучше UNKNOWN, чем ложный «бот» на живом человеке.</p>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc;font-size:12px">' +
+        '<li><b>F1 — молодой пустой аккаунт:</b> &lt;30 дней + 0 подписок + 0 видео <span style="color:#777">(+20)</span></li>' +
+        '<li><b>F2 — шаблонность:</b> &gt;60% generic-фраз («молодец!», «+1», «топ») при ≥5 комментах <span style="color:#777">(+25)</span></li>' +
+        '<li><b>F3 — низкая энтропия:</b> средняя энтропия Шеннона &lt;2.5 на длинных комментах <span style="color:#777">(+20)</span></li>' +
+        '<li><b>F4 — роботизированные интервалы:</b> stddev времени постинга &lt;60 сек <span style="color:#777">(+30)</span></li>' +
+        '<li><b>F7 — авто-ник:</b> англ. слово + 6+ цифр подряд <span style="color:#777">(+15)</span></li>' +
+        '<li><b>RU-лексикон:</b> ≥3 бот-маркеров <span style="color:#777">(+35)</span>, 2 маркера <span style="color:#777">(+15)</span>; 1 — игнор (может быть цитата)</li>' +
+      '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🏷 Категории (мульти-статус)</h3>' +
+      '<p style="color:#aaa;font-size:12px;margin:0 0 6px;line-height:1.5">На один канал вешается несколько меток одновременно — напр. <b>бот + ватник + совок</b>. Каждая — по своему RU-лексикону (≥2 маркера):</p>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc;font-size:12px">' +
+        '<li><b style="color:#cd853f">🪖 ВАТНИК</b> — агрессивная имперская/милитаристская риторика</li>' +
+        '<li><b style="color:#e0556a">🇷🇺 ПУТИНИСТ</b> — «Путин молодец», оправдание власти</li>' +
+        '<li><b style="color:#cd5c5c">☭ СОВОК</b> — ностальгия по СССР, «раньше было лучше»</li>' +
+        '<li><b style="color:#d4af00">🚫 SPAM</b> — реклама / скам по доменному детектору (ниже)</li>' +
+      '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🚫 Детекция SPAM (доменная)</h3>' +
+      '<p style="color:#aaa;font-size:12px;margin:0 0 6px;line-height:1.5">Мошенники меняют ники каждый день — ловить по нику бесполезно. Устойчивый инвариант — <b>одноразовый домен</b>:</p>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc;font-size:12px">' +
+        '<li><b>Мутный TLD:</b> .pw .xyz .top .click .site .tk .ml ... (НЕ .com/.ru) → спам <span style="color:#777">(+50, в нике +70)</span></li>' +
+        '<li><b>Домен внутри ника:</b> <code>@WEHA.PW_...</code> — сама по себе аномалия (живые юзеры так не делают)</li>' +
+        '<li><b>Смешанный алфавит:</b> «PEAЛbHO ГOЛblE» — латиница+кириллица в одном слове, классический обход фильтров <span style="color:#777">(+40)</span></li>' +
+        '<li><b>Авто-жалоба:</b> при включённой опции SPAM-комменты авто-репортятся в YouTube</li>' +
+      '</ul>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">✋ Ручное управление</h3>' +
+      '<ul style="margin:0;padding-left:20px;color:#ccc;font-size:12px">' +
+        '<li><b>Кнопка статуса</b> — вручную выставить/снять любую метку; ручной статус имеет приоритет над AI и эвристикой</li>' +
+        '<li><b>Иконка ⓘ</b> у метки — объяснение, почему присвоен статус (какие сигналы сработали)</li>' +
+        '<li><b>Иконка 📋</b> — вся история комментариев этого автора</li>' +
+      '</ul>' +
       '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🛠 Инструменты</h3>' +
       '<ul style="margin:0;padding-left:20px;color:#ccc">' +
         '<li><b>DeepSeek API</b> — LLM-классификация (~$3/мес при 30K каналов)</li>' +
@@ -1984,9 +2016,10 @@ function insertannNew(jNode) {
         '<li><b>Tampermonkey сломан</b> — переходите на Violentmonkey (стабильнее MV3)</li>' +
         '<li><b>Нет кнопки Отслеживать</b> — выше viewport, прокрутите к заголовку видео</li>' +
       '</ul>' +
-      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">🚧 Планы (T17-T20)</h3>' +
+      '<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#888;margin:16px 0 6px">✅ Готово / 🚧 Планы</h3>' +
       '<ul style="margin:0;padding-left:20px;color:#ccc;font-size:12px">' +
-        '<li><b>T17:</b> Локальные F1-F8 эвристики (entropy, repetition, interval regularity) — снижает API calls на 60-70%</li>' +
+        '<li><b style="color:#43a047">✅ T17:</b> Локальные F1-F8 эвристики (entropy, repetition, interval regularity) — снижают API calls на 60-70%</li>' +
+        '<li><b style="color:#43a047">✅ T21:</b> Категории ВАТНИК/ПУТИНИСТ/СОВОК + мульти-статус + доменная детекция SPAM с авто-жалобой</li>' +
         '<li><b>T18:</b> Temporal burst detection — выявление координации в 60-сек окнах</li>' +
         '<li><b>T19:</b> Narrative tagging через EUvsDisinfo базу</li>' +
         '<li><b>T20:</b> Pravda Network domain blacklist (190+ доменов из DFRLab)</li>' +
