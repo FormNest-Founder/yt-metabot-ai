@@ -2,7 +2,7 @@
 // @name         MetaBot for YouTube
 // @namespace    yt-metabot-user-js
 // @description  More information about users and videos on YouTube.
-// @version      230802
+// @version      230900
 // @homepageURL  https://vk.com/public159378864
 // @supportURL   https://github.com/asrdri/yt-metabot-user-js/issues
 // DISABLED 2026-05-25: @updateURL/@downloadURL pointed to upstream and TM
@@ -15,7 +15,6 @@
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js
 // @require      https://raw.githubusercontent.com/sizzlemctwizzle/GM_config/master/gm_config.js
 // @connect      youtube.com
-// @connect      returnyoutubedislikeapi.com
 // @connect      raw.githubusercontent.com
 // @connect      github.com
 // @connect      githubusercontent.com
@@ -69,11 +68,6 @@ GM_config.init( {
       'label': 'Use additional lists',
       'type': 'checkbox',
       'default': true
-    },
-    'option5': {
-      'label': 'Send alert to server',
-      'type': 'checkbox',
-      'default': false
     },
     'listp1': {
       'label': 'Bookmarks (personal list)',
@@ -145,25 +139,6 @@ GM_config.init( {
       'type': 'checkbox',
       'default': false
     },
-    'mb_batch_interval_min': {
-      'label': 'Batch interval (min)',
-      'type': 'int',
-      'min': 5,
-      'max': 1440,
-      'default': 30
-    },
-    'mb_daily_batch_cap': {
-      'label': 'Daily batch cap',
-      'type': 'int',
-      'min': 1,
-      'max': 500,
-      'default': 50
-    },
-    'mb_auto_classify': {
-      'label': 'Auto-classify new channels',
-      'type': 'checkbox',
-      'default': false
-    },
     'mb_total_input_tokens': {
       'label': 'Total input tokens used',
       'type': 'info'
@@ -178,9 +153,6 @@ GM_config.init( {
 const checkb = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABYAAAAPCAMAAADXs89aAAAA+VBMVEUAAAD///+qqqp/f39mZmZubm5vb29sbGxtbW1tbW1tbW1ubm5ubm5tbW1ubm5tbW1ubm5ubm5ubm5tbW1tbW1ubm5ubm5tbW1ubm5ubm5tbW1ubm5ubm5vb29wcHBxcXFzc3N0dHR1dXV3d3d4eHh6enp7e3t8fHyAgICCgoKFhYWMjIyOjo6Pj4+QkJCSkpKUlJSWlpaZmZmampqdnZ2hoaGqqqqwsLC0tLS1tbW2tra5ubm+vr7ExMTKysrLy8vQ0NDR0dHS0tLU1NTV1dXW1tbe3t7i4uLj4+Pk5OTl5eXn5+fo6Ojq6urs7Ozu7u7w8PD9/f3////SCMufAAAAHHRSTlMAAAMEBSUnKCpbXV9htre6u87Q0dPp6uvs7u/8pkhKVQAAAMdJREFUeNpN0NdWwlAUANEbgvTeQhnQIE1B1ChYQcEC0gL+/8ewzPWwmMf9OMowDKWUP5YqU0pGTaXTHMqdOcM7G7LBIw4Vnc3b89i9BytwYH+uv7oAOqsbyJjCMb4d/urOgYhwqr55wmvdhIRwufXT0zzrgCVM1X2tA5xva1ARLvE4aQCMXoCCcJLaZNpvX71/3QJx4ShUBx+Lz4fp7hrCwmYWL3v5u7XTPmEVtLRfuk7+5OhJIKP9NO2psDIjCatSiId9/7oHY28awgWqV+8AAAAASUVORK5CYII=';
 const minf = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAMAAAAMCGV4AAAAM1BMVEUAAAB/f39vb29sbGxtbW1ubm5ubm5sbGxubm5ubm7////Pz8+Li4uampp8fHzb29uSkpKUSDd+AAAACXRSTlMABCcoXbfQ6/zS5clrAAAAYUlEQVQIHQXBAQLCMAgEsBxs+v/32oJJkE5lZ+8Suhu4Z7R6m2c/NVW28zbmew8xeV4A+FWgkjSkCuYDqAo4gNQCgK0BAFMLHsD2pqjL1rqnSSysOdt2U8C9I0insrN3+QOBPC04AhR0BwAAAABJRU5ErkJggg==';
 const mred = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAMAAAAMCGV4AAAApVBMVEUzMzP/MzP+MzP+MzP+MzP+MzP9MzP+NTP+NTP/XDP+NTP+NTP+MzP+MzP+NDP+NDP+PTP9NDP+OTP9MzP+NTP+NTP+MzP5MzP/MzP/////e3v/NTP/PT3/Tk7/YWH/UVH/TU3/9/f/+fn/cnL/5eX/QED/ZGT/09P/1tb/wcH/xcX/6Oj/Z2f/hYX/aWn/b2//39//cXH/dXX/oqL/paX/T0//dnb54rKOAAAAGHRSTlMABFzrJurQ1O4Fu+8nt7nQKv1ht17tzyc2HRLDAAAAj0lEQVQIHQXABVIDARAEwLmLuwK9SXB35/9Po5JktB5P9sP5tkmSZDlwsdvtfi2mSbI84rqqvuh1k9EAZ1V1h36TNZxW1Tm0GcOhqm5hlgm4rCvQyR7c1DNYZQju6wF0MgeP9QQ22YKX1zfQplnA+8cnHDfJtIfv+kGvmyQnfQ5/B/rdJEmadtZZdTZtk+QfVeIRvDroEMEAAAAASUVORK5CYII=';
-const imgdm = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAMAAADzN3VRAAACfFBMVEUAAAD+wgD+wQD+wQD/qgD/vwD1ugD+wQD/vwD+wQD+wQD+wgD+wgD5vwD+xwD9wAD7vwD5vQD+wQD1uwD/zADyuAD0uQDyuADytwDzuADxtwDztwDytwDwuAD+wgDzuAD+wgDyuQD+wgD1ugDxtwD0tgBaanv+wgBEW5H+wAD+wQDytwDxtgBIXpL+wQBPZZb+wgD+wQBmeKP+wgBXa5r//wD+wQBic5ldcZ9ccJ5SZ5dEW5H+wgD+wgBlcHD+wAD+wQBEXZD+wQD3vADzuAB0dGltfaZKX5T+xAD6vgDfnwBGXJFVaZpfcp5EWpD/wgDyuAD+wQD19fVuf7OOeiHyugT7vwD+wgCykRY8RTno6OiGgF1oeq7ksQinsc3nswf7vwHyuwr8wQL9wQD2zEf068/18OP03pj20mGBgnjv7++oscV9e2dpe6/CmxL11nf18uv11nb9wAByaCn2uwCrjBj8wADl5uZqd5J+fGiXiE3rtAXj5einsMWZiUrz8/NYaI1SZ5xCSTj8wAH3yDX9wQK0mTpTaJtabqNZbqJUaZrh5Orb3OF1aihESjdSZ5r03ZP06cSAjalpcHemiRr6vgD09PTBmhKFf1+0vNTp6enbqwpeWy/YrR7GoizIoyuwlz2dqcM2QTtvgKjKpSmReyD4vgVpdo32zUnxugv3vgb7wAT6wQz1ugD0ugAoOD/6wAn179310FgwPT2ihhvEnBFZWDHl5eb5vQCEfmDR1Nvv8PLr6+uEkrFARzi4lBW3lBWMgljS1+Ht7e2VoLs/RziSfCC6wdivjxdHTDbN0t7n6e34vQLutwV/cCb4vQD10V318ef2yTv0uQDkLrBbAAAAT3RSTlMATOr6AwQ4shjgmfhtLBf5/vJjNQWgSfyz2PuA8CT3wOdUvsaHMR9+ZCn+jDi3t9Au+fR22AKW7+XlyjiC+zJB0Typ+MPO9xgaMwg61+5oF3I9zwAAAY1JREFUeAFtzfObG1EUxvETu7Zt2zb63snERVMbTZPatm3b7tr2/kN7JzO7d7PPfn79Pue8pLE6LbamzZr37NWbEjSxO6DyfenakgSdHkJ5h45G0rQwoL7brLVJuxBB9Y8NVDf0aCjatg1xdmD7Q8B/qwRAzAt4YxHWvhWR1QFcLgOWf10J4EQACFxBlHUncgK4+/PX7z+PwL1OS8/IzYOPtSOygCsofLG7FFzYEwx6wpBYJxPZ0Jhq1pm6QPjwftVqxH1mg8ggwqtjx6/e3KrYf+CgmbpBI+1ZukyWVxQrDh0+4qIeiPv47tr1G9tkOd+tuPN3Xx/qC27N2nXrN2zcpBVu85Z+1H8AENmxc9cnCf9FOZo0mGgIpIrKKgkQhds7lGjY8G/ff/jB3ePlvlYejCCikSdPnYbizNlz5y9cVL9dGsXL6DFQ+R8/efrsuTv0cuy48RMmEmecNBm13rxNTkmdQnWmToNGyszKzplOgkk3Qw9IvpmzZheF5sylBMZ5882uBbRw0eIlpKgB/8u5fuwF0eAAAAAASUVORK5CYII=';
-const imgdma = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAMAAADzN3VRAAABsFBMVEUAAAD+wQD+wgD/qgD+wQD/vwD+wQD+wgD+wgD+wQD+xwBatlz/vwD+wQBft1n+wQDxtwD1ugD9wADyuAD0uQD/zAD7vwD5vQDxtwDzuADyuQDztwDyuADytwDytwDytwDwuAD+wgD0tgCstyvzuAD1uwD+wgD+wgD+wgD+wAD+wQD+wQD+wgD+wQD+wgD//wD+wQD+wgD+wgD+wAD+wQD+wQD+xACtvC1Ztl3/wgD///97uEnyuAD+wQCBu1CWujp7xX32uwCOeiGrjBiykRabx2qc1J5nvWryugRat108RTn7vwH7vwD+wgD9wADxwAb4vQB/cCaSfCAoOD95tkmGt0CihhteWy+ReyDBmhIwPT1HTDb8wAB6t0n6vgD7wAT2zUn03ZP06cR4wXQ2QTv9wQD2zEf068/18OP03pj20mF5ulhyaCnutwX11nf18uv11nb6wQzbqwr10V318ef2yTvksQjCmxI/Rzj6wAn179310FimiRr8wAH3yDX9wQKV0ZdZWDFARzj0uQD5vQDnswdCSTi4lBVESjeKukCvjxe3lBV1aij0ugD4vQLEnBHgcTooAAAAOXRSTlMA6kwD+gTgbfiyF+gYmd5jh8b5/EkF/vL72FSAoLOM8CT3MVjANee+fin+ty75dgKWgvtB0akaVEpkodaYAAABOUlEQVR4XnXPVXMiURCG4SYES4C4u7uvfSO4S9zd3d3d1/5yOAWEGYq8N33xVFdXUyS9RqfOzM3LSK8kWSkGLcIF/lbXSCBJgVi9+UXKKKQlQ9q0UKyKbMgBeBRKwzcUiM+alc3EAJzsA8HLfwDsHsBj7xYKcoj0WuBPH3A88ATg2QE4XmEVCok0AMbGh//fjQDA6P3L79N+BIQSIh0AvE8sbm4x8dt8PpsfolCmIjUS9SCUU0UMesx8KKfTxPODQ1UkecbsZXGchQ0j1UZBnJySipfqwjAzOze/IJd6BkvLK6tr6xtyaWgEurd3dvdE8HKhJogHh0ciACcnyUXU3HJ2fhFEAqHWq+sbsEwWFsfdsuEOSVs7wsXfIVJ2dCYUVte3r4RUSd8VeJNKKn2m/PHTyMTlcjP49QE0u4VtSVu7kQAAAABJRU5ErkJggg==';
-const imgdmd = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACMAAAAZCAMAAACM5megAAAAllBMVEUAAAB/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/f3+AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAx6H3iAAAAMXRSTlMABAgMFBgcICQoLDA8QERITFBUWGBkaGx4fICDj5OXo6evs7e7v8PH09ff4+fr8/f7vr5GKgAAAN1JREFUGBl9wY1agjAABdAbIoSCWiIJLn8yLKNN7vu/XBvQJ87JOegZLfJDaew3U7ilklcfAW5EiTb7JGtRGFtq8hV9BTsntH5orNH3VrNx9mB4kkYdo29xoUPlAwgCtIKaLgJAqkI0BJ0qABEFGme6xQBUCXhhOOUDuycI7jCRHCAlmSDnsEsGrDjgmL6MAYxOfGyGTiwquikPV0s6bdF3oIMao+9Z8d4Gt5KadxJYMt7xYclok7AJar+KRvVFrYTtSC1Ca07tHbZvkhU6KbUlbPOiyCfo+OuiWOHfHxHEYF/PvYVrAAAAAElFTkSuQmCC';
 const imgyto = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAMAAAC7IEhfAAACJVBMVEX///+qAADMMzP/MzPjKiXbJiPVIyPZJSPFGx/QIiLBGB7cKSXRIiLeKSnkKyfOICHcIiLRISLJHB7jKybCGB/QISHVKSDgKifMGRnhKyXMHR/CGR3ZJSPiLCbdKSXiKybFFyLCGR7WJCLdJyTDGB3JHSDhKiXIHB/ZJiPMHiHQIiLXIyPTIyLKHR/FGCDFGh/lMxnjKyXDGR3GGx/cJyTEGR7BGh7NICDUIiLOHiPcLiLiKyXgKSXhKyXPHyHXJSPNICDgKibgKSbJHB/XJCPnLiLfKSXfKSTfKSbDGR7EGR7KHB/CGR3CGB3CGB7BGB7BGB3BGR3////NHyHLHiDo4ODWJCPMHiD//v7p4eHaJyTZJiTYJiTOICHXJSPYJSPPICHeKSXQISHVJCPunZzFGh/UIyPqmpvnzMv89PTlxMTYUVL78vL08fHomZrzzM399/f+/Pzm09PXTk7QNDbfKiXGGx/pmprnj47XSUvktrbompryxMXVOTncKCXKHSDHHB/t5+f7+vrdKCXbJyTsnJvcOTfhgYDIHB/18fHqm5v05eXaMzHZVFTYTEvHGx/++vrZLy3spKThiYnTLi78+vrs19fqnJzYKynVNDXjrq7VPT7rm5vJHSDebm3XKCbRISLZWFrTIyLSIiLtrKzEGh7cZmXWJiXgKibvtLTWQ0Tlvr7bXVzfd3bwvL3sm5vjW1nTIiLDGh7hKybtnJviKybCGR58TkH5AAAAUnRSTlMAAwUFie17+rn8r7n8HzqvFu9b73vWH1sK54nnida5/BaYr1uJ7fqal+cWOu/6H5oKr/q5mls6H9Y6Fnzte3vnfJeYmOcW7Zqa7e2Y1u/8/O/WqnF1KAAAAb9JREFUeF6FzGOb61AYheGV1B3btu05tLHbsY1j27Zt2/h9k7SnyZt0p7m/ruda0BAi59VkxGVlxWXUtEUKMBJhTflLpFgjwNO6qPC3TuHiZQiStPwDR3sStCwr9hpYaQFRnTliKLOa/IWNhBCmftafDqk+0OUdM5EHn2jbGRO2aMiKexU/zvVyFUOS6OhTjG85cKWPw5EIIL1fNc7Y5fM3+4OlA8KCIdUfxtjde18fDOktFVA2SEih5OL0s+eDOmWwdxJnmc+pk7Pv3ndq2JE7Rsih/7Tn85cxKhfNk8R3qQmcdhy6SpZmlL8injDV1p6OR9eUpRyun4Qc0tNduwOLC+GviUuMmrl9R1nCEfOCoOGO+w/JEoOEUWJKyW7cOjpKJSBqmNjP/Ha+eTysFYX5A4Q/7P74aUBvIVo8hBx2fzvoCdYCoYSEhxk7stnDUSIAqV2qbdtfdnGlAmiq8Cr2ePkqmiBZctzUGshKC56aKCiFT+wFE7H4r+hESEUIEOuuh1AnQpHs3GfImQxCrJowUCVCq2HVW47VDQiSnVP7S6c2Jxs8lflp/4i0/EoYERrj3WvXrd+wcZM7vlEANQfRAClqAtKfNQAAAABJRU5ErkJggg==';
 const regexalt = /\{(.*?)\}/;
 const regexdate = /joinedDateText"?:\s*\{"content":"(.*?)"/;
@@ -201,24 +173,15 @@ var arrayListP1 = [];
 var arrayListC1 = [];
 var arrayListC2 = [];
 var arrayListC3 = [];
+var arrayListC4 = [];
+var arrayListC5 = [];
 var orderedClicksArray = [];
 var bDTaskSet = 0;
 var bDBlur = 0;
 var ytmode = 0;
 var listqueue = 0;
-var descc1 = '';
-var descc2 = '';
-var descc3 = '';
-var descc4 = '';
-var descc5 = '';
 var iconsdef = ["\uD83D\uDCCC", "\uD83D\uDD32", "\uD83D\uDD34", "\uD83D\uDD3B", "\uD83D\uDD3A", "\uD83D\uDD37"];
 const iconstyledef = 'font-family: Segoe UI Symbol; line-height: 1em;';
-const iconp1 = '<span style="' + iconstyledef + '">' + iconsdef[0] + '</span> ';
-const iconc1 = '<span style="' + iconstyledef + '">' + iconsdef[1] + '</span> ';
-const iconc2 = '<span style="' + iconstyledef + '">' + iconsdef[2] + '</span> ';
-const iconc3 = '<span style="' + iconstyledef + '">' + iconsdef[3] + '</span> ';
-const iconc4 = '<span style="' + iconstyledef + '">' + iconsdef[4] + '</span> ';
-const iconc5 = '<span style="' + iconstyledef + '">' + iconsdef[5] + '</span> ';
 var txtlistpadd = '\u2003<span id="listpadd" style="cursor: pointer; ' + iconstyledef + '" title="\u0414\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u0432 \u0437\u0430\u043A\u043B\u0430\u0434\u043A\u0438">' + iconsdef[0] + '</span>';
 
 // ===== AI-augmented bot detection module =====
@@ -327,9 +290,12 @@ var _mbIdbBatch = {
 
 mbdb.open = function() {
   return new Promise(function(resolve, reject) {
-    var req = indexedDB.open('metabot_db', 3);
+    // Version 4: adds handle_cache store (T19 OPT-3). Opening at v3 after v4 exists
+    // causes VersionError on every page load — always open at the current max version.
+    var req = indexedDB.open('metabot_db', 4);
     req.onupgradeneeded = function(e) {
       var db = e.target.result;
+      // v1-v3 stores (created if absent, safe on upgrade from any earlier version)
       if (!db.objectStoreNames.contains('channels')) {
         db.createObjectStore('channels', {keyPath: 'channelId'});
       }
@@ -348,6 +314,11 @@ mbdb.open = function() {
       }
       if (!db.objectStoreNames.contains('analysis_queue')) {
         db.createObjectStore('analysis_queue', {keyPath: 'channelId'});
+      }
+      // v4: handle_cache store for @handle→UCxxx persistent resolution cache
+      if (e.oldVersion < 4 && !db.objectStoreNames.contains('handle_cache')) {
+        var hs = db.createObjectStore('handle_cache', {keyPath: 'handle'});
+        hs.createIndex('by_expiry', 'expiry', {unique: false});
       }
     };
     req.onsuccess = function(e) { resolve(e.target.result); };
@@ -714,62 +685,63 @@ mbdb.setUserLabel = function(channelId, userLabel, toggle) {
 
 // ===== T17 — Local heuristics (RU_BOT_LEXICON + F1-F8) =====
 var RU_BOT_LEXICON = [
-  /\bинoагент(ы|ах|ами|ов|у)?\b/i,
-  /\bпят[ао]я колонна\b/i,
-  /\bденацификаци\w+/i,
-  /\bколлективн\w+ запад\w*/i,
-  /\bпиндос\w+/i,
-  /\bнацист\w+ в Киеве/i,
-  /\bангл[оа]сакс\w+/i,
-  /\bру[сс]?офоб\w+/i,
-  /\bлибераст\w+/i,
-  /\bпредател\w+ родин\w+/i,
-  /\bпрод[аы]лись (запад\w*|америк)/i,
-  /\bгрант[оа]ед\w*/i,
-  /\bспециальн\w+ военн\w+ операци\w+/i,
-  /\bбандеровц\w+/i,
-  /\bнав[оа]льнен\w+/i
+  // иноагент — also matches Latin 'o' obfuscation (спамеры пишут инoагент с латинской o)
+  /(?<![а-яёa-z0-9])ин[оo]агент[а-яё]*/i,
+  /(?<![а-яёa-z0-9])пят[ао]я колонна/i,
+  /(?<![а-яёa-z0-9])денацификаци[а-яё]+/i,
+  /(?<![а-яёa-z0-9])коллективн[а-яё]+ запад[а-яё]*/i,
+  /(?<![а-яёa-z0-9])пиндос[а-яё]*/i,
+  /(?<![а-яёa-z0-9])нацист[а-яё]+ в Киеве/i,
+  /(?<![а-яёa-z0-9])англ[оа]сакс[а-яё]*/i,
+  /(?<![а-яёa-z0-9])ру[сс]?офоб[а-яё]*/i,
+  /(?<![а-яёa-z0-9])либераст[а-яё]*/i,
+  /(?<![а-яёa-z0-9])предател[а-яё]+ родин[а-яё]+/i,
+  /(?<![а-яёa-z0-9])прод[аы]лись (запад[а-яё]*|америк)/i,
+  /(?<![а-яёa-z0-9])грант[оа]ед[а-яё]*/i,
+  /(?<![а-яёa-z0-9])специальн[а-яё]+ военн[а-яё]+ операци[а-яё]+/i,
+  /(?<![а-яёa-z0-9])бандеровц[а-яё]*/i,
+  /(?<![а-яёa-z0-9])нав[оа]льнен[а-яё]*/i
 ];
 
 var RU_VATNIK_LEXICON = [
-  /\bангл[оа]сакс\w*/i,
-  /\bпиндос\w*/i,
-  /\bколлективн\w+ запад\w*/i,
-  /\bзагнивающ\w+ запад\w*/i,
-  /\bимпери\w+ лжи/i,
-  /\bгейроп\w*/i,
-  /\bхохл\w*/i,
-  /\bбандеровц\w*/i,
-  /\bроссия (—|-) велик\w+ держав\w*/i,
-  /\bвсё врут (про россию|про русских|западные)/i,
-  /\bденацификаци\w+/i,
-  /\bденат(о|и)фикаци\w*/i,
-  /\bвсе верн(о|ё)м/i
+  /(?<![а-яёa-z0-9])англ[оа]сакс[а-яё]*/i,
+  /(?<![а-яёa-z0-9])пиндос[а-яё]*/i,
+  /(?<![а-яёa-z0-9])коллективн[а-яё]+ запад[а-яё]*/i,
+  /(?<![а-яёa-z0-9])загнивающ[а-яё]+ запад[а-яё]*/i,
+  /(?<![а-яёa-z0-9])импери[а-яё]+ лжи/i,
+  /(?<![а-яёa-z0-9])гейроп[а-яё]*/i,
+  /(?<![а-яёa-z0-9])хохл[а-яё]*/i,
+  /(?<![а-яёa-z0-9])бандеровц[а-яё]*/i,
+  /(?<![а-яёa-z0-9])россия (—|-) велик[а-яё]+ держав[а-яё]*/i,
+  /(?<![а-яёa-z0-9])всё врут (про россию|про русских|западные)/i,
+  /(?<![а-яёa-z0-9])денацификаци[а-яё]+/i,
+  /(?<![а-яёa-z0-9])денат[ои]фикаци[а-яё]*/i,
+  /(?<![а-яёa-z0-9])все верн[оё]м/i
 ];
 var RU_PUTINIST_LEXICON = [
-  /\bпутин (молодец|красавчик|сильн\w+|мудр\w+|умн\w+|велик\w+)/i,
-  /\bпутин (—|-) наш президент/i,
-  /\bвлад[иa]мир владимирович/i,
-  /\bпрезидент (защищает|оберегает|сохраняет)/i,
-  /\bзеленск\w+ клоун/i,
-  /\bправильн\w+ решен\w+ президент\w*/i,
-  /\bвв(п|х) (наш |правильн)/i,
-  /\bтолько (путин|он) сможет/i,
-  /\bголосуй за путина/i,
-  /\bпереизбран\w+ путин\w*/i
+  /(?<![а-яёa-z0-9])путин (молодец|красавчик|сильн[а-яё]+|мудр[а-яё]+|умн[а-яё]+|велик[а-яё]+)/i,
+  /(?<![а-яёa-z0-9])путин (—|-) наш президент/i,
+  /(?<![а-яёa-z0-9])влад[иa]мир владимирович/i,
+  /(?<![а-яёa-z0-9])президент (защищает|оберегает|сохраняет)/i,
+  /(?<![а-яёa-z0-9])зеленск[а-яё]+ клоун/i,
+  /(?<![а-яёa-z0-9])правильн[а-яё]+ решен[а-яё]+ президент[а-яё]*/i,
+  /(?<![а-яёa-z0-9])вв[пх] (наш |правильн)/i,
+  /(?<![а-яёa-z0-9])только (путин|он) сможет/i,
+  /(?<![а-яёa-z0-9])голосуй за путина/i,
+  /(?<![а-яёa-z0-9])переизбран[а-яё]+ путин[а-яё]*/i
 ];
 var RU_SOVOK_LEXICON = [
-  /\bраньше (всё |всегда )?(было )?лучше/i,
-  /\bв (наше|совет\w+) время/i,
-  /\b(распад|развал) (ссср|союза)/i,
-  /\bвс(ё|е) разрушили (демократ\w*|перестройщик\w*|ельцин)/i,
-  /\bпри сталин\w*/i,
-  /\bсамая (велик\w+) страна (—|-) ссср/i,
-  /\bпотерял[иа] страну/i,
-  /\bдо девяност\w*/i,
-  /\bв (ссср|союзе) (всё|это) бесплатн\w*/i,
-  /\bгорбачев[оа]? предал/i,
-  /\bбыли (же )?рабоч\w+ места/i
+  /(?<![а-яёa-z0-9])раньше (всё |всегда )?(было )?лучше/i,
+  /(?<![а-яёa-z0-9])в (наше|совет[а-яё]+) время/i,
+  /(?<![а-яёa-z0-9])(распад|развал) (ссср|союза)/i,
+  /(?<![а-яёa-z0-9])вс[её] разрушили (демократ[а-яё]*|перестройщик[а-яё]*|ельцин)/i,
+  /(?<![а-яёa-z0-9])при сталин[а-яё]*/i,
+  /(?<![а-яёa-z0-9])самая (велик[а-яё]+) страна (—|-) ссср/i,
+  /(?<![а-яёa-z0-9])потерял[иа] страну/i,
+  /(?<![а-яёa-z0-9])до девяност[а-яё]*/i,
+  /(?<![а-яёa-z0-9])в (ссср|союзе) [а-яё ]+ бесплатн[а-яё]*/i,
+  /(?<![а-яёa-z0-9])горбач[её]в[оа]? предал/i,
+  /(?<![а-яёa-z0-9])были (же )?рабоч[а-яё]+ места/i
 ];
 
 // SPAM — commercial/scam phrase patterns (stable categories only).
@@ -861,7 +833,8 @@ mbHeuristics.detectSpamDomain = function(str, inHandle) {
   // Match domain-like tokens incl. obfuscated separators: word . tld  /  word [dot] tld
   // TLD terminates on anything that is not a letter/digit (underscore, space, end, punct)
   // — note \b fails before "_" since "_" is a word char (e.g. WEHA.PW_DEBOCHKU).
-  var re = /([a-z0-9][a-z0-9-]{1,30})\s*(?:\.|\[\s*dot\s*\]|\(\s*dot\s*\)|\s+dot\s+)\s*([a-z]{2,10})(?![a-z0-9])/gi;
+  // Plain dot must have NO surrounding whitespace (real domains); obfuscated forms keep spacing.
+  var re = /([a-z0-9][a-z0-9-]{1,30})(?:\.|\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\s+dot\s+)\s*)([a-z]{2,10})(?![a-z0-9])/gi;
   var m;
   while ((m = re.exec(str)) !== null) {
     var tld = m[2].toLowerCase();
@@ -1039,9 +1012,8 @@ mbHeuristics.compute = async function(channel, comments) {
     for (var si = 0; si < RU_SOVOK_LEXICON.length; si++) if (RU_SOVOK_LEXICON[si].test(txt)) { sovokHits++; break; }
     for (var spi = 0; spi < RU_SPAM_LEXICON.length; spi++) if (RU_SPAM_LEXICON[spi].test(txt)) { spamHits++; break; }
   }
-  // T21.1 — domain & mixed-alphabet SPAM signals (stable across nick rotation)
-  var qsFull = mbHeuristics.quickSpamCheck(channel, comments);
-  if (qsFull.score >= 30) { spamHits++; for (var qi = 0; qi < qsFull.signals.length; qi++) signals.push(qsFull.signals[qi]); }
+  // T21.1 — domain & mixed-alphabet SPAM signals: reuse qs from top-of-function (no second call)
+  if (qs.score >= 30) { spamHits++; qs.signals.forEach(function(s) { signals.push(s); }); }
 
   var extraLabels = [];
   if (vatnikHits >= 2) { signals.push('VATNIK:hits=' + vatnikHits); score += vatnikHits >= 4 ? 35 : 20; dataPoints++; extraLabels.push('VATNIK'); }
@@ -1414,15 +1386,30 @@ function _mbBootstrapTrackButton() {
     setTimeout(run, 1500);
     setTimeout(run, 4000);
   });
-  // Fallback: MutationObserver — if owner renderer appears later
+  // Fallback: MutationObserver — if owner renderer appears later; disconnect once inserted
   try {
     var mo = new MutationObserver(function() {
       if (document.querySelectorAll('.mbTrackOwnerBtn, [id^="mbTrackOwnerBtn"]').length === 0 && document.querySelector('ytd-video-owner-renderer #channel-name a, ytd-video-owner-renderer ytd-channel-name a, #owner #channel-name a, #upper-row #channel-name a, #meta #channel-name a, ytd-watch-metadata #owner a, ytd-video-owner-renderer a.yt-simple-endpoint')) {
         run();
+        // Disconnect once button is found to be present on next tick
+        setTimeout(function() {
+          if (document.querySelectorAll('.mbTrackOwnerBtn, [id^="mbTrackOwnerBtn"]').length > 0) {
+            mo.disconnect();
+            window._mbTrackBtnObserver = null;
+          }
+        }, 200);
       }
     });
     mo.observe(document.body, { childList: true, subtree: true });
+    window._mbTrackBtnObserver = mo;
   } catch (e) {}
+  // Disconnect on SPA navigation (will re-observe on next _mbBootstrapTrackButton call)
+  document.addEventListener('yt-navigate-finish', function() {
+    if (window._mbTrackBtnObserver) {
+      window._mbTrackBtnObserver.disconnect();
+      window._mbTrackBtnObserver = null;
+    }
+  });
 }
 _mbBootstrapTrackButton();
 
@@ -1496,6 +1483,7 @@ function filllist(numArr, response, code, url) {
     switch (numArr) {
       case -1:
         annYTOtxt = regexannyto.exec(response);
+        if (!annYTOtxt) annYTOtxt = ['', '', '', ''];
         var dbname = "YTO announcement";
         switch (ytmode) {
           case 1:
@@ -1516,27 +1504,22 @@ function filllist(numArr, response, code, url) {
       case 1:
         arrayListC1 = response.match(/[^\r\n=]+/g);
         var dbname = "Custom list #1";
-        descc1 = '[' + (arrayListC1.length / 2 - 1) + '] ' + Aparse(arrayListC1[0]) + ': ' + Aparse(arrayListC1[1]) + '<br>\u2003';
         break;
       case 2:
         arrayListC2 = response.match(/[^\r\n=]+/g);
         var dbname = "Custom list #2";
-        descc2 = '[' + (arrayListC2.length / 2 - 1) + '] ' + Aparse(arrayListC2[0]) + ': ' + Aparse(arrayListC2[1]) + '<br>\u2003';
         break;
       case 3:
         arrayListC3 = response.match(/[^\r\n=]+/g);
         var dbname = "Custom list #3";
-        descc3 = '[' + (arrayListC3.length / 2 - 1) + '] ' + Aparse(arrayListC3[0]) + ': ' + Aparse(arrayListC3[1]) + '<br>\u2003';
         break;
       case 4:
         arrayListC4 = response.match(/[^\r\n=]+/g);
         var dbname = "Custom list #4";
-        descc4 = '[' + (arrayListC4.length / 2 - 1) + '] ' + Aparse(arrayListC4[0]) + ': ' + Aparse(arrayListC4[1]) + '<br>\u2003';
         break;
       case 5:
         arrayListC5 = response.match(/[^\r\n=]+/g);
         var dbname = "Custom list #5";
-        descc5 = '[' + (arrayListC5.length / 2 - 1) + '] ' + Aparse(arrayListC5[0]) + ': ' + Aparse(arrayListC5[1]) + '<br>\u2003';
     }
     if (code === 200) {
       console.log("[MetaBot for Youtube] " + dbname + " loaded. Code " + code);
@@ -1556,7 +1539,6 @@ function waitforlists() {
         setupCommentObserver();
         // T6: ytd-comment-view-model is primary in modern YT; legacy ytd-comment-renderer kept as fallback
         waitForKeyElements('ytd-comment-view-model, div#main.style-scope.ytd-comment-renderer', parseitemNew);
-//        waitForKeyElements('ytd-menu-renderer.style-scope.ytd-video-primary-info-renderer', preparedmNew);
         // T2: primary = modern YT polymer3 header; fallback = legacy c4-tabbed-header
         waitForKeyElements('yt-page-header-renderer, div#channel-header.ytd-c4-tabbed-header-renderer', insertchanNew);
         break;
@@ -1694,61 +1676,6 @@ async function insertchanNew(jNode) {
     } else {
       console.warn('[MetaBot] insertchanNew: channel title target not found, badge not inserted');
     }
-  }
-}
-
-function preparedmNew(jNode) {
-  this.addEventListener('yt-navigate-finish', function preparedmNewR() {
-    this.removeEventListener('yt-navigate-finish', preparedmNewR);
-    setTimeout(preparedmNew, 300, jNode);
-  });
-  var videoid = getURLParameter('v', location.search);
-  if (!videoid) {
-    console.log("[MetaBot for Youtube] Dislikemeter: video id not found.");
-    return;
-  }
-  var pNode = $(jNode).parent().parent().parent().find('div#flex')[0];
-  if (typeof pNode === 'undefined') {
-    console.log("[MetaBot for Youtube] Dislikemeter: node not found.");
-    return;
-  }
-  pNode.innerHTML = '';
-  if (GM_config.get('option3')) {
-    var btnText = $(pNode).parent().find('ytd-button-renderer.ytd-menu-renderer')[0];
-    if ($(btnText).find('yt-formatted-string#text').length > 0) {
-      $(btnText).find('yt-formatted-string#text').html('');
-    }
-    if (!$(pNode).parent().find('ytd-sentiment-bar-renderer#sentiment').is(":visible")) {
-      btnText = $(pNode).parent().find('ytd-toggle-button-renderer.ytd-menu-renderer.force-icon-button')[0];
-      $(btnText).find('yt-formatted-string#text').html('');
-      btnText = $(pNode).parent().find('ytd-toggle-button-renderer.ytd-menu-renderer.force-icon-button')[1];
-      $(btnText).find('yt-formatted-string#text').html('');
-    }
-  }
-  console.log("[MetaBot for Youtube] Return YouTube Dislike: requesting data for video id " + videoid);
-  getlist(insertdmNew, pNode, 'https://returnyoutubedislikeapi.com/votes?videoId=' + videoid);
-}
-
-function insertdmNew(jNode, response, code, url) {
-  try {
-    var data = JSON.parse(response);
-    var dislikes = data.dislikes || 0;
-    var rating = data.rating || 0;
-    // red if more than 30% dislikes, green otherwise
-    var color = (rating < 0.7) ? '#e05252' : '#52c06e';
-    var dmspan = document.createElement('span');
-    dmspan.id = 'dmspan';
-    dmspan.style.cssText = 'display:inline-flex;align-items:center;margin:0 8px;font-size:1.4rem;color:' + color + ';cursor:default';
-    dmspan.title = 'Дизлайки (returnyoutubedislike.com)';
-    dmspan.innerHTML = '👎 ' + dislikes.toLocaleString('ru-RU');
-    jNode.style.textAlign = "right";
-    // remove previous insertion to avoid duplicates
-    var prev = $(jNode).find('span#dmspan')[0];
-    if (prev) prev.remove();
-    $(jNode).prepend(dmspan);
-    console.log("[MetaBot for Youtube] Return YouTube Dislike: dislikes=" + dislikes + " rating=" + rating);
-  } catch (e) {
-    console.warn('[MetaBot] insertdmNew: failed to parse response:', e.message);
   }
 }
 
@@ -2414,7 +2341,8 @@ function listpdelNew(jNode) {
   $(jNode).find("span#bookmark").remove();
   var tempArray = $('textarea#listpersonal')[0].value.split('\n');
   var itemDel = arrayListP1.indexOf($(jNode).find("a")[0].href.split('/').pop());
-  tempArray.splice(itemDel / 2,1);
+  if (itemDel === -1) return;
+  tempArray.splice(itemDel / 2, 1);
   $('textarea#listpersonal')[0].value = tempArray.join('\n');
   GM_config.set('listp1', tempArray.join('\n'));
   GM_config.save();
@@ -3318,7 +3246,8 @@ function Aparse(text) {
 }
 
 function currentlangNew() {
-  return regexlang.exec(document.head.innerHTML)[1];
+  var m = regexlang.exec(document.head.innerHTML);
+  return m ? m[1] : 'en';
 }
 
 function getURLParameter(name, link) {
@@ -3446,31 +3375,9 @@ $(window).blur(function() {
 var _mbHandleCacheTTL = 7 * 24 * 3600 * 1000; // 7 days in ms
 var _mbHandleCacheMaxSize = 300; // LRU evict at this size
 
-// Ensure IDB store exists (added in version 4 migration)
+// handle_cache is now created in mbdb.open() at v4 — no separate migration needed.
 mbdb._ensureHandleCacheStore = function() {
-  if (mbdb._handleCacheStoreEnsured) return Promise.resolve();
-  return new Promise(function(resolve) {
-    var req = indexedDB.open('metabot_db', 4);
-    req.onupgradeneeded = function(e) {
-      var db = e.target.result;
-      if (!db.objectStoreNames.contains('handle_cache')) {
-        var hs = db.createObjectStore('handle_cache', {keyPath: 'handle'});
-        hs.createIndex('by_expiry', 'expiry', {unique: false});
-      }
-      // Carry over all existing stores unchanged
-    };
-    req.onsuccess = function(e) {
-      // Replace cached db promise with upgraded db
-      mbdb._dbPromise = Promise.resolve(e.target.result);
-      mbdb._handleCacheStoreEnsured = true;
-      resolve();
-    };
-    req.onerror = function() {
-      // Non-fatal: fall back to L1 only
-      mbdb._handleCacheStoreEnsured = true;
-      resolve();
-    };
-  });
+  return mbdb.getDb().then(function() {});
 };
 
 mbdb.getHandle = function(handle) {
