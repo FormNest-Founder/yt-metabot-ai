@@ -251,22 +251,21 @@ var _mbIdbBatch = {
       countReq.onsuccess = function() {
         var current = countReq.result;
         var toAdd = batch;
-        // If over cap: evict one, add one (keep at most 50)
-        if (current >= 50) {
-          // Only add the last comment from this batch (most recent)
-          toAdd = [batch[batch.length - 1]];
+        var toAdd = batch;
+        if (current + toAdd.length > 50) {
+          toAdd.forEach(function(c) { store.add(c); });
+          var excess = current + toAdd.length - 50;
           var cursorReq = idx.openCursor(chId);
           cursorReq.onsuccess = function(e) {
             var cursor = e.target.result;
-            if (cursor) {
+            if (cursor && excess > 0) {
               store.delete(cursor.primaryKey);
-              toAdd.forEach(function(c) { store.add(c); });
+              excess--;
+              cursor.continue();
             }
           };
         } else {
-          // Add all new comments respecting cap
-          var remaining = 50 - current;
-          toAdd.slice(0, remaining).forEach(function(c) { store.add(c); });
+          toAdd.forEach(function(c) { store.add(c); });
         }
       };
     });
@@ -917,7 +916,9 @@ mbHeuristics.compute = async function(channel, comments) {
   // Засчитываем только КОМБО: молодой аккаунт <30 дней + нет подписчиков + нет видео.
   if (channel.joinDate) {
     var ageDays = (Date.now() - new Date(channel.joinDate).getTime()) / 86400000;
-    if (ageDays < 30 && (!channel.subscriberCount || channel.subscriberCount === 0) && (!channel.videoCount || channel.videoCount === 0)) {
+    var subCountMatch = (channel.subscriberCount || '0').toString().replace(/[^\d]/g, '');
+    var subCount = subCountMatch ? parseInt(subCountMatch, 10) : 0;
+    if (ageDays < 30 && subCount === 0 && (!channel.videoCount || channel.videoCount === 0)) {
       signals.push('F1:very_young_empty_account:' + Math.floor(ageDays) + 'd');
       score += 20;
       dataPoints++;
@@ -1386,28 +1387,26 @@ function _mbBootstrapTrackButton() {
     setTimeout(run, 1500);
     setTimeout(run, 4000);
   });
-  // Fallback: MutationObserver — if owner renderer appears later; disconnect once inserted
-  try {
-    var mo = new MutationObserver(function() {
+  // Fallback: polling via setInterval instead of MutationObserver on body (fixes CPU thrashing)
+  if (!window._mbTrackBtnPoller) {
+    window._mbTrackBtnPoller = setInterval(function() {
       if (document.querySelectorAll('.mbTrackOwnerBtn, [id^="mbTrackOwnerBtn"]').length === 0 && document.querySelector('ytd-video-owner-renderer #channel-name a, ytd-video-owner-renderer ytd-channel-name a, #owner #channel-name a, #upper-row #channel-name a, #meta #channel-name a, ytd-watch-metadata #owner a, ytd-video-owner-renderer a.yt-simple-endpoint')) {
         run();
-        // Disconnect once button is found to be present on next tick
+        // Stop polling once button is injected
         setTimeout(function() {
           if (document.querySelectorAll('.mbTrackOwnerBtn, [id^="mbTrackOwnerBtn"]').length > 0) {
-            mo.disconnect();
-            window._mbTrackBtnObserver = null;
+            clearInterval(window._mbTrackBtnPoller);
+            window._mbTrackBtnPoller = null;
           }
         }, 200);
       }
-    });
-    mo.observe(document.body, { childList: true, subtree: true });
-    window._mbTrackBtnObserver = mo;
-  } catch (e) {}
+    }, 1500);
+  }
   // Disconnect on SPA navigation (will re-observe on next _mbBootstrapTrackButton call)
   document.addEventListener('yt-navigate-finish', function() {
-    if (window._mbTrackBtnObserver) {
-      window._mbTrackBtnObserver.disconnect();
-      window._mbTrackBtnObserver = null;
+    if (window._mbTrackBtnPoller) {
+      clearInterval(window._mbTrackBtnPoller);
+      window._mbTrackBtnPoller = null;
     }
   });
 }
@@ -2072,12 +2071,31 @@ async function parseitemNew(jNode) {
         await new Promise(function(r){ setTimeout(r, 1200); });
         commentText = extractText(jNode).slice(0, 1000);
       }
+      function extractTime(node) {
+        var el = $(node).find('#published-time-text a, .published-time-text, #header-author yt-formatted-string.published-time-text a').first();
+        var t = el.text ? el.text().trim() : '';
+        if (!t) return Date.now();
+        var match = t.match(/(\d+)\s+(sec|min|hour|day|week|month|year|сек|мин|час|дн|ден|нед|мес|год|лет)/i);
+        if (!match) return Date.now();
+        var val = parseInt(match[1], 10);
+        var unit = match[2].toLowerCase();
+        var ms = 0;
+        if (unit.startsWith('sec') || unit.startsWith('сек')) ms = val * 1000;
+        else if (unit.startsWith('min') || unit.startsWith('мин')) ms = val * 60000;
+        else if (unit.startsWith('hour') || unit.startsWith('час')) ms = val * 3600000;
+        else if (unit.startsWith('day') || unit.startsWith('дн') || unit.startsWith('ден')) ms = val * 86400000;
+        else if (unit.startsWith('week') || unit.startsWith('нед')) ms = val * 604800000;
+        else if (unit.startsWith('month') || unit.startsWith('мес')) ms = val * 2592000000;
+        else if (unit.startsWith('year') || unit.startsWith('год') || unit.startsWith('лет')) ms = val * 31536000000;
+        else ms = val * 1000;
+        return Date.now() - ms;
+      }
       // T19 OPT-1: use batch buffer instead of direct IDB write (saves ~4.6ms per comment)
       _mbIdbBatch.queueComment({
         channelId: userID,
         videoId: videoId,
         text: commentText,
-        timestamp: Date.now(),
+        timestamp: extractTime(jNode),
         isReply: !!jNode.closest('ytd-comment-replies-renderer')
       });
       var channel = await mbdb.getChannel(userID);
@@ -2761,6 +2779,7 @@ async function reportCommentAsSpam(threadNode) {
     var reportItem = null;
     var menuItems = document.querySelectorAll('tp-yt-paper-listbox tp-yt-paper-item, ytd-menu-popup-renderer ytd-menu-service-item-renderer');
     for (var i = 0; i < menuItems.length; i++) {
+      if (menuItems[i].closest('tp-yt-iron-dropdown[aria-hidden="true"]')) continue;
       var t = menuItems[i].textContent.trim().toLowerCase();
       if (/report|пожаловаться|жалоба/i.test(t)) { reportItem = menuItems[i]; break; }
     }
@@ -3190,8 +3209,16 @@ function scheduledDislike() {
   if ( bDBlur || dialogOpen || document.querySelector('label.option-selectable-item-renderer-radio-container') ) {
     setTimeout(scheduledDislike, minDCTime + Math.random() * (maxDCTime - minDCTime));
   } else {
-    if (orderedClicksArray.length) {
-      var element = orderedClicksArray.shift();
+    var validElement = null;
+    while (orderedClicksArray.length) {
+      var el = orderedClicksArray.shift();
+      if (el.isConnected !== false) {
+        validElement = el;
+        break;
+      }
+    }
+    if (validElement) {
+      var element = validElement;
       // T6: primary state check via aria-pressed; fallback to legacy class check
       var alreadyPressed = element.getAttribute('aria-pressed') === 'true'
         || element.classList.contains('style-default-active'); // DEAD - legacy class
